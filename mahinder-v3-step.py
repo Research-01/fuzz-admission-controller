@@ -27,12 +27,18 @@ LIVE_PNG = "kernel_live.png"  # updated continuously in headless mode
 # -------------------------
 W_MIN = 5
 W_MAX = 40
+
+# Volatility estimator (EW-RMS of ΔF)
 VOLATILITY_ALPHA = 0.10
 VOL_EPS = 1e-6
 
 ENERGY_CALIBRATE_AFTER_FREEZE = True
-ENERGY_CALIB_WIN_S = 60  # seconds of friction history to calibrate from
+ENERGY_CALIB_WIN_S = 60          # seconds of friction history to calibrate from
+ENERGY_RECALIB_EVERY_S = 300     # re-calibrate every N seconds after freeze (set None/0 to disable)
 ENERGY_TARGET_W = (W_MIN + W_MAX) / 2.0
+
+# Optional: provide a smooth "energy level" for display/alerting
+ENERGY_SMOOTH_ALPHA = 0.15       # EMA on energy output; set 0 to disable
 
 # -------------------------
 # Mahalanobis friction config
@@ -71,12 +77,6 @@ if ENABLE_PLOT:
 # ============================================================
 # eBPF program
 # ============================================================
-# Key change: higher-resolution histogram:
-# - still log2-scaled to cover wide dynamic range
-# - BUT with 16 sub-buckets per log2 bucket to reduce quantization
-#
-# Hist key = (log2_bucket << SUBBITS) | sub_bucket
-# where sub_bucket is derived from delta_us location within that power-of-two range.
 bpf_text = r"""
 #include <linux/sched.h>
 
@@ -103,12 +103,6 @@ BPF_HASH(ts_runnable, u32, u64);
 BPF_HASH(ts_dstate, u32, u64);
 BPF_HASH(ts_softirq, u32, u64);
 
-/*
- * Higher-resolution histogram:
- * key = (b << SUBBITS) | s
- * b = floor(log2(delta_us))  (0..)
- * s = 0..(SUBBUCKETS-1) sub-range within [2^b, 2^(b+1))
- */
 BPF_HISTOGRAM(sched_lat_hist);
 
 static __always_inline u64 make_hist_key(u64 delta_us) {
@@ -117,18 +111,9 @@ static __always_inline u64 make_hist_key(u64 delta_us) {
     }
 
     u64 b = bpf_log2l(delta_us);
-
-    // Range [lo, hi] = [2^b, 2^(b+1)-1]
-    // We want sub-buckets across that range.
     u64 lo = 1ULL << b;
-
-    // For small b, avoid shifting by negative amounts when normalizing.
-    // Use shift = max(b - SUBBITS, 0)
     u64 shift = (b > SUBBITS) ? (b - SUBBITS) : 0;
 
-    // Normalize delta within the bucket by shifting down.
-    // Sub-bucket is the top SUBBITS bits of (delta - lo) relative to bucket width.
-    // This is an efficient approximation without division.
     u64 norm = (delta_us - lo) >> shift;
     u64 s = norm & (SUBBUCKETS - 1);
 
@@ -233,7 +218,6 @@ TRACEPOINT_PROBE(irq, softirq_exit) {
     return 0;
 }
 
-/* Cleanup to avoid PID map growth */
 TRACEPOINT_PROBE(sched, sched_process_exit) {
     u32 pid = args->pid;
     ts_runnable.delete(&pid);
@@ -252,16 +236,6 @@ def ensure_csv(path: str, header):
             csv.writer(f).writerow(header)
 
 def percentiles_from_subbucket_hist(items, ps=(0.95, 0.99), subbits=4, mode="mid"):
-    """
-    Percentiles from histogram keyed by (b<<subbits)|s, where
-      b = log2 bucket
-      s = sub-bucket within that power-of-two range
-
-    mode:
-      - "lower": return lower edge of sub-bucket
-      - "mid":   return mid-point of sub-bucket (recommended)
-      - "upper": return upper edge of sub-bucket
-    """
     buckets = sorted((int(k.value), int(v.value)) for k, v in items)
     total = sum(c for _, c in buckets)
     if total == 0:
@@ -277,17 +251,14 @@ def percentiles_from_subbucket_hist(items, ps=(0.95, 0.99), subbits=4, mode="mid
         b = key >> subbits
         s = key & (subbuckets - 1)
 
-        # Base range for bucket b: [2^b, 2^(b+1)-1]
         lo = 1 << b
         hi = (1 << (b + 1)) - 1
         width = hi - lo + 1
 
-        # Sub-range [sub_lo, sub_hi]
         sub_lo = lo + (width * s) // subbuckets
         sub_hi = lo + (width * (s + 1)) // subbuckets - 1
         if sub_hi < sub_lo:
             sub_hi = sub_lo
-
         return sub_lo, sub_hi
 
     def pick_value(key: int) -> int:
@@ -296,7 +267,6 @@ def percentiles_from_subbucket_hist(items, ps=(0.95, 0.99), subbits=4, mode="mid
             return sub_lo
         if mode == "upper":
             return sub_hi
-        # mid
         return (sub_lo + sub_hi) // 2
 
     for key, c in buckets:
@@ -305,7 +275,6 @@ def percentiles_from_subbucket_hist(items, ps=(0.95, 0.99), subbits=4, mode="mid
             if p not in out and running >= t:
                 out[p] = pick_value(key)
 
-    # Ensure all percentiles present
     last_key = buckets[-1][0]
     for p in ps:
         out.setdefault(p, pick_value(last_key))
@@ -349,49 +318,88 @@ def mahalanobis_distance(x: np.ndarray, X: np.ndarray) -> float:
 
 # ============================================================
 # Adaptive energy: mean(|ΔF|) over volatility-chosen window
+# - FIXES:
+#   * Calibrate using full ENERGY_CALIB_WIN_S
+#   * Recalibrate periodically so k_factor tracks regime changes
+#   * Vol uses EW-RMS of ΔF for stability
+#   * Optional EMA smoothing on energy output (Energy_Smooth)
 # ============================================================
 class AdaptiveVolatilityEnergy:
-    def __init__(self, w_min=W_MIN, w_max=W_MAX, alpha=VOLATILITY_ALPHA):
+    def __init__(self, w_min=W_MIN, w_max=W_MAX, alpha=VOLATILITY_ALPHA,
+                 smooth_alpha=ENERGY_SMOOTH_ALPHA):
         self.w_min = int(w_min)
         self.w_max = int(w_max)
         self.alpha = float(alpha)
+
+        # EW-RMS of ΔF: keep EW mean of ΔF^2
+        self.vol2 = 0.0
         self.vol = 0.0
+
         self.buf = deque(maxlen=self.w_max + 5)
         self.current_w = self.w_max
         self.k_factor = 1.0
         self._calibrated = False
 
-    def calibrate(self, abs_deltas: np.ndarray):
-        abs_deltas = np.asarray(abs_deltas, dtype=float)
-        abs_deltas = abs_deltas[np.isfinite(abs_deltas)]
-        if abs_deltas.size < 10:
+        self.smooth_alpha = float(smooth_alpha)
+        self.energy_smooth = float("nan")
+
+    def calibrate_from_friction(self, fric_hist: np.ndarray):
+        fric_hist = np.asarray(fric_hist, dtype=float)
+        fric_hist = fric_hist[np.isfinite(fric_hist)]
+        if fric_hist.size < 3:
             self.k_factor = 1.0
             self._calibrated = True
             return
-        med = float(np.median(abs_deltas))
+
+        abs_d = np.abs(np.diff(fric_hist))
+        abs_d = abs_d[np.isfinite(abs_d)]
+        if abs_d.size < 10:
+            self.k_factor = 1.0
+            self._calibrated = True
+            return
+
+        med = float(np.median(abs_d))
+        # Choose k so that when vol ≈ median(|ΔF|), W ≈ target
         self.k_factor = max(1e-6, med * float(ENERGY_TARGET_W))
         self._calibrated = True
 
-    def update(self, friction: float) -> Tuple[float, int]:
+    def update(self, friction: float) -> Tuple[float, float, int]:
+        """
+        Returns (energy_raw, energy_smooth, current_w)
+        energy_raw = mean(|ΔF|) over last W
+        energy_smooth = EMA(energy_raw) if enabled else NaN
+        """
         if not np.isfinite(friction):
-            return float("nan"), self.current_w
+            return float("nan"), self.energy_smooth, self.current_w
 
         self.buf.append(float(friction))
 
+        # Update vol (EW-RMS of ΔF)
         if len(self.buf) >= 2:
-            grad = abs(self.buf[-1] - self.buf[-2])
-            self.vol = self.alpha * grad + (1.0 - self.alpha) * self.vol
+            d = float(self.buf[-1] - self.buf[-2])
+            d2 = d * d
+            self.vol2 = self.alpha * d2 + (1.0 - self.alpha) * self.vol2
+            self.vol = float(np.sqrt(max(self.vol2, 0.0)))
 
         raw_w = int(self.k_factor / (self.vol + VOL_EPS))
         self.current_w = max(self.w_min, min(self.w_max, raw_w))
 
         if len(self.buf) < 2:
-            return 0.0, self.current_w
+            energy_raw = 0.0
+        else:
+            lookback = min(len(self.buf), self.current_w)
+            window = np.array(list(self.buf)[-lookback:], dtype=float)
+            energy_raw = float(np.mean(np.abs(np.diff(window)))) if window.size >= 2 else 0.0
 
-        lookback = min(len(self.buf), self.current_w)
-        window = np.array(list(self.buf)[-lookback:], dtype=float)
-        energy = float(np.mean(np.abs(np.diff(window)))) if window.size >= 2 else 0.0
-        return energy, self.current_w
+        # Optional smoothing for interpretability
+        if self.smooth_alpha and self.smooth_alpha > 0.0 and np.isfinite(energy_raw):
+            if not np.isfinite(self.energy_smooth):
+                self.energy_smooth = energy_raw
+            else:
+                a = self.smooth_alpha
+                self.energy_smooth = a * energy_raw + (1.0 - a) * self.energy_smooth
+
+        return energy_raw, self.energy_smooth, self.current_w
 
 
 # ============================================================
@@ -411,7 +419,8 @@ class LivePlot:
         self.ax1.legend(loc="upper right")
         self.ax1.set_title("Mahalanobis Friction (Magnitude)")
 
-        (self.l_eng,) = self.ax2.plot([], [], label="Energy (adaptive mean |ΔF|)", color='orange')
+        (self.l_eng,) = self.ax2.plot([], [], label="Energy (mean |ΔF|)", color='orange')
+        (self.l_eng_s,) = self.ax2.plot([], [], label="Energy_Smooth (EMA)", color='blue')
         self.ax2.set_ylabel("Energy")
         self.ax2.grid(True, alpha=0.3)
         self.ax2.legend(loc="upper right")
@@ -419,12 +428,13 @@ class LivePlot:
 
         self.fig.tight_layout()
 
-    def update(self, t, fric, eng):
+    def update(self, t, fric, eng, eng_s):
         n = len(t)
-        if not (len(fric) == n and len(eng) == n):
+        if not (len(fric) == n and len(eng) == n and len(eng_s) == n):
             return
         self.l_fric.set_data(t, fric)
         self.l_eng.set_data(t, eng)
+        self.l_eng_s.set_data(t, eng_s)
 
         self.ax1.relim(); self.ax1.autoscale_view()
         self.ax2.relim(); self.ax2.autoscale_view()
@@ -453,6 +463,7 @@ def main():
         "Friction",
         "dF_dt",
         "Energy",
+        "Energy_Smooth",
         "Energy_W",
         "Energy_Vol",
         "Energy_kFactor",
@@ -470,6 +481,7 @@ def main():
     fric_b = deque(maxlen=keep_points)
     dfr_b  = deque(maxlen=keep_points)
     eng_b  = deque(maxlen=keep_points)
+    engs_b = deque(maxlen=keep_points)
 
     lp = LivePlot() if ENABLE_PLOT else None
     last_png_save = 0.0
@@ -477,16 +489,23 @@ def main():
     b = BPF(text=bpf_text)
 
     baseline_X = None
-    energy_calc = AdaptiveVolatilityEnergy(w_min=W_MIN, w_max=W_MAX, alpha=VOLATILITY_ALPHA)
+    energy_calc = AdaptiveVolatilityEnergy(w_min=W_MIN, w_max=W_MAX, alpha=VOLATILITY_ALPHA,
+                                           smooth_alpha=ENERGY_SMOOTH_ALPHA)
 
-    calib_fric_b = deque(maxlen=max(10, int(ENERGY_CALIB_WIN_S / GRID_STEP_S)))
+    # keep enough friction for calibration/recalibration
+    calib_len = max(10, int(ENERGY_CALIB_WIN_S / GRID_STEP_S) + 5)
+    calib_fric_b = deque(maxlen=calib_len)
+
+    # schedule recalibration
+    last_recalib_t = None
 
     print("\n=== K-Sense Kernel Collector (Frozen Baseline + Adaptive Energy Window) ===")
     print(f"Sampling Rate: {GRID_STEP_S}s")
     print(f"Calibration (Warmup) Period: {WARMUP_S}s")
     print(f"Freeze baseline after warmup: {FREEZE_BASELINE_AFTER_WARMUP}")
     print(f"Min sched events for baseline sample: {MIN_SCHED_CNT_FOR_BASELINE}")
-    print(f"Energy: mean(|ΔF|) over adaptive window W in [{W_MIN},{W_MAX}], vol EMA alpha={VOLATILITY_ALPHA}")
+    print(f"Energy: mean(|ΔF|) over adaptive window W in [{W_MIN},{W_MAX}], vol EW-RMS alpha={VOLATILITY_ALPHA}")
+    print(f"Energy calibration window: {ENERGY_CALIB_WIN_S}s; recalibrate every: {ENERGY_RECALIB_EVERY_S}s")
     print(f"Output: {OUT_CSV}")
     print("Press Ctrl+C to stop.\n")
 
@@ -518,7 +537,6 @@ def main():
                 if sched_cnt > 0:
                     sched_avg_ms = sched_total_ms / sched_cnt
 
-                # Updated percentile extraction (sub-bucket histogram, mid-point mapping)
                 pct = percentiles_from_subbucket_hist(
                     b["sched_lat_hist"].items(),
                     ps=(0.95, 0.99),
@@ -566,12 +584,17 @@ def main():
                         baseline_X = np.array(baseline_feat_b, dtype=float)
                         baseline_mode = "FROZEN"
                         print(f"[BASELINE] Frozen with {baseline_X.shape[0]} samples at t={int(elapsed_s)}s")
+
+                        # reset calibration schedule at freeze
+                        last_recalib_t = time.time()
                     else:
                         baseline_mode = "CALIBRATING"
             else:
                 friction = mahalanobis_distance(x_t, baseline_X)
 
             fric_b.append(float(friction))
+
+            # --- Maintain friction history for calibration ---
             if np.isfinite(friction):
                 calib_fric_b.append(float(friction))
 
@@ -582,15 +605,21 @@ def main():
                 dF_dt = float("nan")
             dfr_b.append(float(dF_dt))
 
-            # --- Adaptive Energy update ---
-            if (baseline_X is not None) and ENERGY_CALIBRATE_AFTER_FREEZE and (not energy_calc._calibrated):
-                if len(calib_fric_b) >= 20:
-                    arr = np.array(calib_fric_b, dtype=float)
-                    abs_d = np.abs(np.diff(arr))
-                    energy_calc.calibrate(abs_d)
+            # --- Energy calibration / recalibration ---
+            if baseline_X is not None and ENERGY_CALIBRATE_AFTER_FREEZE:
+                need = int(ENERGY_CALIB_WIN_S / GRID_STEP_S)
+                if (not energy_calc._calibrated) and (len(calib_fric_b) >= need):
+                    energy_calc.calibrate_from_friction(np.array(calib_fric_b)[-need:])
+                elif ENERGY_RECALIB_EVERY_S and ENERGY_RECALIB_EVERY_S > 0 and (len(calib_fric_b) >= need):
+                    now_t = time.time()
+                    if last_recalib_t is not None and (now_t - last_recalib_t) >= ENERGY_RECALIB_EVERY_S:
+                        energy_calc.calibrate_from_friction(np.array(calib_fric_b)[-need:])
+                        last_recalib_t = now_t
 
-            energy, w = energy_calc.update(friction)
+            # --- Adaptive Energy update ---
+            energy, energy_s, w = energy_calc.update(friction)
             eng_b.append(float(energy) if np.isfinite(energy) else float("nan"))
+            engs_b.append(float(energy_s) if np.isfinite(energy_s) else float("nan"))
 
             # --- CSV Output ---
             with open(OUT_CSV, "a", newline="") as f:
@@ -605,6 +634,7 @@ def main():
                     f"{friction:.6f}" if np.isfinite(friction) else "",
                     f"{dF_dt:.6f}" if np.isfinite(dF_dt) else "",
                     f"{energy:.6f}" if np.isfinite(energy) else "",
+                    f"{energy_s:.6f}" if np.isfinite(energy_s) else "",
                     int(w),
                     f"{energy_calc.vol:.6f}",
                     f"{energy_calc.k_factor:.6f}",
@@ -615,7 +645,8 @@ def main():
                 t_list = list(t_buf)[-plot_points:]
                 fr_list = list(fric_b)[-plot_points:]
                 en_list = list(eng_b)[-plot_points:]
-                lp.update(t_list, fr_list, en_list)
+                es_list = list(engs_b)[-plot_points:]
+                lp.update(t_list, fr_list, en_list, es_list)
 
                 if HEADLESS:
                     now_t = time.time()
@@ -632,4 +663,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
