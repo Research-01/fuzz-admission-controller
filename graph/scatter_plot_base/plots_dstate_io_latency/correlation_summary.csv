@@ -1,0 +1,4 @@
+Application,Correlation,P-value,N,Output
+Social,0.907761934785913,0.0,1740,social_dstate_latency_correlation.pdf
+Hotel,0.8766122688247794,0.0,1740,hotel_dstate_latency_correlation.pdf
+Feedback,0.9051269214717454,0.0,1740,feedback_dstate_latency_correlation.pdf
