@@ -1,0 +1,427 @@
+libEGL warning: DRI2: failed to authenticate
+
+(process:393548): GLib-GIO-CRITICAL **: 12:13:54.335: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:13:54.335: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:13:54.335: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:13:54.335: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+In file included from <built-in>:2:
+In file included from /virtual/include/bcc/bpf.h:12:
+In file included from include/linux/types.h:6:
+In file included from include/uapi/linux/types.h:14:
+In file included from include/uapi/linux/posix_types.h:5:
+In file included from include/linux/stddef.h:5:
+In file included from include/uapi/linux/stddef.h:5:
+In file included from include/linux/compiler_types.h:148:
+include/linux/compiler-clang.h:45:9: warning: '__HAVE_BUILTIN_BSWAP32__' macro redefined [-Wmacro-redefined]
+#define __HAVE_BUILTIN_BSWAP32__
+        ^
+<command line>:4:9: note: previous definition is here
+#define __HAVE_BUILTIN_BSWAP32__ 1
+        ^
+In file included from <built-in>:2:
+In file included from /virtual/include/bcc/bpf.h:12:
+In file included from include/linux/types.h:6:
+In file included from include/uapi/linux/types.h:14:
+In file included from include/uapi/linux/posix_types.h:5:
+In file included from include/linux/stddef.h:5:
+In file included from include/uapi/linux/stddef.h:5:
+In file included from include/linux/compiler_types.h:148:
+include/linux/compiler-clang.h:46:9: warning: '__HAVE_BUILTIN_BSWAP64__' macro redefined [-Wmacro-redefined]
+#define __HAVE_BUILTIN_BSWAP64__
+        ^
+<command line>:5:9: note: previous definition is here
+#define __HAVE_BUILTIN_BSWAP64__ 1
+        ^
+In file included from <built-in>:2:
+In file included from /virtual/include/bcc/bpf.h:12:
+In file included from include/linux/types.h:6:
+In file included from include/uapi/linux/types.h:14:
+In file included from include/uapi/linux/posix_types.h:5:
+In file included from include/linux/stddef.h:5:
+In file included from include/uapi/linux/stddef.h:5:
+In file included from include/linux/compiler_types.h:148:
+include/linux/compiler-clang.h:47:9: warning: '__HAVE_BUILTIN_BSWAP16__' macro redefined [-Wmacro-redefined]
+#define __HAVE_BUILTIN_BSWAP16__
+        ^
+<command line>:3:9: note: previous definition is here
+#define __HAVE_BUILTIN_BSWAP16__ 1
+        ^
+3 warnings generated.
+
+=== K-Sense Kernel Collector (Frozen Baseline + Adaptive Energy Window) ===
+Sampling Rate: 1s
+Calibration (Warmup) Period: 300s
+Freeze baseline after warmup: True
+Min sched events for baseline sample: 50
+Energy: mean(|ΔF|) over adaptive window W in [5,40], vol EMA alpha=0.1
+Output: kernel_metrics.csv
+Press Ctrl+C to stop.
+
+
+(process:393548): GLib-GIO-CRITICAL **: 12:13:56.334: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:13:56.334: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:13:56.339: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:13:56.339: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:13:56.684: g_dbus_connection_register_object: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:13:56.684: g_dbus_connection_register_object: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:13:56.685: g_dbus_connection_register_object: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:13:56.685: g_dbus_connection_register_object: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:13:56.685: g_dbus_connection_register_object: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:13:56.685: g_dbus_connection_register_object: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:11.269: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:11.269: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:11.269: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:11.505: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:11.505: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:11.505: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:11.505: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:12.628: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:12.628: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:12.628: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:12.631: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:12.631: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:12.631: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:12.631: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:12.632: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:12.632: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:12.632: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:12.632: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:12.632: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:12.632: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:12.632: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:13.908: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:13.908: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:16.640: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:16.640: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:16.640: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:16.643: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:16.643: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:16.788: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:16.788: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:16.926: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:16.926: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:17.061: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:17.061: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:17.211: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:17.211: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:17.353: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:17.353: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:17.429: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:17.429: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:17.429: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:17.430: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:18.731: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:18.731: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:18.731: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:18.844: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:18.844: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:18.844: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:18.844: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:20.190: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:20.190: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:20.190: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:20.353: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:20.353: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:20.353: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:20.353: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:21.502: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:21.502: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:21.502: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:21.722: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:21.722: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:21.722: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:21.722: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:24.141: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:24.141: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:24.141: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:24.347: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:24.347: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:24.347: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:24.347: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:26.773: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:26.773: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:26.773: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:26.997: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:26.997: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:26.997: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:26.997: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:28.108: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:28.108: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:28.108: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:28.309: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:28.309: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:28.309: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:28.309: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:30.685: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:30.685: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:30.685: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:30.913: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:30.913: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:30.913: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:30.913: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:30.964: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:30.964: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:30.964: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:34.917: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:34.917: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:34.917: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:34.917: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:36.038: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:36.038: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:36.038: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:37.388: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:37.388: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:37.388: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:37.388: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:38.717: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:38.717: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:38.717: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:38.720: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:38.720: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:38.870: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:38.870: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:40.037: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:40.037: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:40.193: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:40.193: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:41.358: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:41.358: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:41.597: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:41.597: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:41.597: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:14:41.597: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:15:58.419: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:15:58.419: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:15:58.419: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:01.235: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:01.235: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:01.235: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:01.235: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:03.650: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:03.650: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:03.651: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:03.653: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:03.653: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:03.846: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:03.846: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:05.085: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:05.085: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:05.328: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:05.328: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:05.517: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:05.517: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:06.677: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:06.677: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:06.677: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:06.677: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:06.682: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:16:06.682: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+[BASELINE] Frozen with 228 samples at t=300s
+
+(process:393548): GLib-GIO-CRITICAL **: 12:18:59.590: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:18:59.590: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:18:59.591: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:19:14.688: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:19:14.688: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:19:14.688: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:19:14.688: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:19:16.122: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:19:16.122: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+
+(process:393548): GLib-GIO-CRITICAL **: 12:19:16.122: g_dbus_connection_emit_signal: assertion 'object_path != NULL && g_variant_is_object_path (object_path)' failed
+^CTraceback (most recent call last):
+  File "/home/ali/.local/lib/python3.10/site-packages/matplotlib/backends/backend_gtk4.py", line 316, in idle_draw
+    self.draw()
+  File "/home/ali/.local/lib/python3.10/site-packages/matplotlib/backends/backend_agg.py", line 382, in draw
+    self.figure.draw(self.renderer)
+  File "/home/ali/.local/lib/python3.10/site-packages/matplotlib/artist.py", line 94, in draw_wrapper
+    result = draw(artist, renderer, *args, **kwargs)
+  File "/home/ali/.local/lib/python3.10/site-packages/matplotlib/artist.py", line 71, in draw_wrapper
+    return draw(artist, renderer)
+  File "/home/ali/.local/lib/python3.10/site-packages/matplotlib/figure.py", line 3257, in draw
+    mimage._draw_list_compositing_images(
+  File "/home/ali/.local/lib/python3.10/site-packages/matplotlib/image.py", line 134, in _draw_list_compositing_images
+    a.draw(renderer)
+  File "/home/ali/.local/lib/python3.10/site-packages/matplotlib/artist.py", line 71, in draw_wrapper
+    return draw(artist, renderer)
+  File "/home/ali/.local/lib/python3.10/site-packages/matplotlib/axes/_base.py", line 3226, in draw
+    mimage._draw_list_compositing_images(
+  File "/home/ali/.local/lib/python3.10/site-packages/matplotlib/image.py", line 134, in _draw_list_compositing_images
+    a.draw(renderer)
+  File "/home/ali/.local/lib/python3.10/site-packages/matplotlib/artist.py", line 71, in draw_wrapper
+    return draw(artist, renderer)
+  File "/home/ali/.local/lib/python3.10/site-packages/matplotlib/lines.py", line 821, in draw
+    renderer.draw_path(gc, tpath, affine.frozen())
+  File "/home/ali/.local/lib/python3.10/site-packages/matplotlib/backends/backend_agg.py", line 130, in draw_path
+    self._renderer.draw_path(gc, path, transform, rgbFace)
+KeyboardInterrupt
+^Z
+[1]+  Stopped                 sudo -E python3 mahinder_v3_step.py
