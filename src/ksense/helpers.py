@@ -2,9 +2,6 @@ import csv
 import os
 from typing import Iterable
 
-import numpy as np
-
-from .config import MAHAL_MIN_SAMPLES, MAHAL_REG_ABS, MAHAL_REG_REL
 
 
 def ensure_csv(path: str, header: Iterable[str]) -> None:
@@ -72,39 +69,3 @@ def percentiles_from_subbucket_hist(items, ps=(0.95, 0.99), subbits=4, mode="mid
     for p in ps:
         out.setdefault(p, pick_value(last_key))
     return out
-
-
-def mahalanobis_distance(x: np.ndarray, X: np.ndarray) -> float:
-    try:
-        x = np.asarray(x, dtype=float).reshape(-1)
-        X = np.asarray(X, dtype=float)
-        if X.ndim != 2 or x.ndim != 1:
-            return float("nan")
-        if X.shape[1] != x.shape[0]:
-            return float("nan")
-
-        X = X[np.all(np.isfinite(X), axis=1)]
-        if not np.all(np.isfinite(x)):
-            return float("nan")
-
-        d = x.shape[0]
-        if X.shape[0] < max(MAHAL_MIN_SAMPLES, d + 2):
-            return float("nan")
-
-        mu = np.mean(X, axis=0)
-        Sigma = np.cov(X, rowvar=False, bias=False)
-        if Sigma.shape != (d, d) or not np.all(np.isfinite(Sigma)):
-            return float("nan")
-
-        diag = np.diag(Sigma)
-        diag_mean = float(np.mean(diag)) if np.all(np.isfinite(diag)) else 0.0
-        reg = MAHAL_REG_ABS + MAHAL_REG_REL * max(diag_mean, 0.0)
-        Sigma_reg = Sigma + reg * np.eye(d)
-
-        L = np.linalg.cholesky(Sigma_reg)
-        diff = (x - mu).reshape(-1, 1)
-        y = np.linalg.solve(L, diff)
-        dist2 = float(np.dot(y[:, 0], y[:, 0]))
-        return float(np.sqrt(max(dist2, 0.0)))
-    except Exception:
-        return float("nan")

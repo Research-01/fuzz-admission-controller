@@ -5,7 +5,7 @@ Python package for easier maintenance.
 
 ## Layout
 
-- `ksense/` Python package (BPF program, helpers, energy model, plotting, main loop)
+- `src/ksense/` Python package (BPF program, helpers, energy model, plotting, main loop)
 - `main.py` Entry point script
 - `graph/` Analysis outputs and plotting scripts
 

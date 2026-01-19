@@ -26,7 +26,8 @@ from .config import (
     HEADLESS,
 )
 from .energy import AdaptiveVolatilityEnergy
-from .helpers import ensure_csv, mahalanobis_distance, percentiles_from_subbucket_hist
+from .friction import mahalanobis_distance
+from .helpers import ensure_csv, percentiles_from_subbucket_hist
 from .plotting import LivePlot
 
 
