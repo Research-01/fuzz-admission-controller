@@ -26,7 +26,7 @@ from .config import (
     HEADLESS,
 )
 from .energy import AdaptiveVolatilityEnergy
-from .friction import mahalanobis_distance
+from .friction import mahalanobis_distance_and_direction
 from .helpers import ensure_csv, percentiles_from_subbucket_hist
 from .plotting import LivePlot
 
@@ -41,6 +41,7 @@ def main():
         "BaselineMode",
         "BaselineSamples",
         "Friction",
+        "Direction",
         "dF_dt",
         "Energy",
         "Energy_W",
@@ -58,6 +59,7 @@ def main():
     baseline_feat_b = deque(maxlen=baseline_w)
 
     fric_b = deque(maxlen=keep_points)
+    dir_b = deque(maxlen=keep_points)
     dfr_b = deque(maxlen=keep_points)
     eng_b = deque(maxlen=keep_points)
 
@@ -151,6 +153,7 @@ def main():
                     baseline_feat_b.append(x_t)
 
                 friction = float("nan")
+                direction = float("nan")
 
                 if (not in_warmup) and FREEZE_BASELINE_AFTER_WARMUP:
                     if len(baseline_feat_b) >= max(MAHAL_MIN_SAMPLES, x_t.shape[0] + 2):
@@ -160,9 +163,10 @@ def main():
                     else:
                         baseline_mode = "CALIBRATING"
             else:
-                friction = mahalanobis_distance(x_t, baseline_X)
+                friction, direction = mahalanobis_distance_and_direction(x_t, baseline_X)
 
             fric_b.append(float(friction))
+            dir_b.append(float(direction))
             if np.isfinite(friction):
                 calib_fric_b.append(float(friction))
 
@@ -195,6 +199,7 @@ def main():
                     baseline_mode,
                     len(baseline_feat_b) if baseline_X is None else baseline_X.shape[0],
                     f"{friction:.6f}" if np.isfinite(friction) else "",
+                    f"{direction:.1f}" if np.isfinite(direction) else "",
                     f"{dF_dt:.6f}" if np.isfinite(dF_dt) else "",
                     f"{energy:.6f}" if np.isfinite(energy) else "",
                     int(w),
@@ -207,7 +212,8 @@ def main():
                 t_list = list(t_buf)[-plot_points:]
                 fr_list = list(fric_b)[-plot_points:]
                 en_list = list(eng_b)[-plot_points:]
-                lp.update(t_list, fr_list, en_list)
+                dr_list = list(dir_b)[-plot_points:]
+                lp.update(t_list, fr_list, en_list, dr_list)
 
                 if HEADLESS:
                     now_t = time.time()
