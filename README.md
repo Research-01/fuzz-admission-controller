@@ -54,6 +54,18 @@ python3 scripts/step_response_prober.py
 python3 scripts/latency_p99_prober.py
 ```
 
+## Docker
+
+K-Sense requires privileged access for eBPF. Example:
+
+```bash
+docker build -t ksense .
+docker run --rm --privileged \
+  -v /sys/kernel/debug:/sys/kernel/debug \
+  -v /lib/modules:/lib/modules:ro \
+  ksense
+```
+
 ## Research Context (IEEE Paper Summary)
 
 K-Sense targets edge environments where applications are often black boxes and
