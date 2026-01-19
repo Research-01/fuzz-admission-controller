@@ -25,8 +25,8 @@ anon@users.noreply.github.com
 - `scripts/monitor_cpu_psi.py` CPU + PSI monitoring helper script
 - `scripts/step_response_prober.py` Step-response load generator for 3 apps (per-second CSV)
 - `scripts/latency_p99_prober.py` Parallel P99 latency prober for 3 apps (per-interval CSV)
-- `node_collector/` Node-level syscall + kernel signal collector (eBPF)
-- `graph/` Analysis outputs and plotting scripts
+- `node_collector/` Node-level syscall + kernel signal collector (eBPF) used to
+  compute correlations and select which kernel syscalls/tracepoints best track latency
 
 ## Run
 
