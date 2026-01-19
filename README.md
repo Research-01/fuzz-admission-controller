@@ -85,6 +85,8 @@ The DaemonSet runs one pod per node. Apply the namespace and DaemonSet with kust
 kubectl apply -k kubernetes/
 ```
 
+`kernel_metrics.csv` is generated inside the pod filesystem when running as a DaemonSet.
+
 Check status:
 
 ```bash
