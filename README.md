@@ -29,6 +29,7 @@ anon@users.noreply.github.com
 - `scripts/latency_p99_prober.py` Parallel P99 latency prober for 3 apps (per-interval CSV). Uses the same app sources:
   - https://github.com/example/DeathStarBench
   - https://github.com/example/CustomerFeedback
+- `kubernetes/` Kubernetes manifests (namespace, DaemonSet, kustomization)
 - `node_collector/` Node-level syscall + kernel signal collector (eBPF) used to
   compute correlations and select which kernel syscalls/tracepoints best track latency
 
