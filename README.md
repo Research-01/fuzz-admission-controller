@@ -20,7 +20,7 @@ Paper status: This work is under review for IEEE ICFE 2026.
 ## Run
 
 ```bash
-python3 main.py
+sudo -E python3 main.py
 ```
 
 Node-level collector:
