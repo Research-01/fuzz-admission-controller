@@ -30,11 +30,17 @@ anon@users.noreply.github.com
 
 ## Run
 
+There are two separate components:
+1) `K-Sense` main collector (friction/energy signals)
+2) `node_collector` (kernel event correlation to select signals)
+
+K-Sense main collector:
+
 ```bash
 sudo -E python3 main.py
 ```
 
-Node-level collector:
+Node-level correlation collector:
 
 ```bash
 sudo -E python3 node_collector/main.py
