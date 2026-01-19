@@ -1,5 +1,3 @@
-import os
-
 # -------------------------
 # Collector cadence
 # -------------------------
@@ -10,7 +8,6 @@ GRID_STEP_S = 1  # should match WINDOW_SEC
 # Output files
 # -------------------------
 OUT_CSV = "kernel_metrics.csv"
-LIVE_PNG = "kernel_live.png"  # updated continuously in headless mode
 
 # -------------------------
 # Energy Settings (ADAPTIVE WINDOW ON |ΔF|)
@@ -39,15 +36,3 @@ BASELINE_WIN_S = 5 * 60
 FREEZE_BASELINE_AFTER_WARMUP = True
 MIN_SCHED_CNT_FOR_BASELINE = 50
 BASELINE_GATE_DIST = 3.08  # not used if baseline frozen
-
-# -------------------------
-# Plotting controls
-# -------------------------
-ENABLE_PLOT = True
-PLOT_WINDOW_MIN = 60
-SAVE_PNG_EVERY_S = 10
-
-# -------------------------
-# Matplotlib backend (GUI vs headless)
-# -------------------------
-HEADLESS = (os.environ.get("DISPLAY", "") == "")

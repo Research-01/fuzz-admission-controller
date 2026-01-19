@@ -20,11 +20,15 @@ anon@users.noreply.github.com
 
 ## Layout
 
-- `src/ksense/` Python package (BPF program, helpers, energy model, plotting, main loop)
+- `src/ksense/` Python package (BPF program, helpers, energy model, main loop)
 - `main.py` Entry point script
-- `scripts/monitor_cpu_psi.py` CPU + PSI monitoring helper script
-- `scripts/step_response_prober.py` Step-response load generator for 3 apps (per-second CSV)
-- `scripts/latency_p99_prober.py` Parallel P99 latency prober for 3 apps (per-interval CSV)
+- `scripts/monitor_cpu_psi.py` CPU + PSI monitoring helper script (CSV only, no plotting)
+- `scripts/step_response_prober.py` Step-response load generator for 3 apps (per-second CSV). Uses DeathStarBench and a sentiment-analysis app:
+  - https://github.com/example/DeathStarBench
+  - https://github.com/example/CustomerFeedback
+- `scripts/latency_p99_prober.py` Parallel P99 latency prober for 3 apps (per-interval CSV). Uses the same app sources:
+  - https://github.com/example/DeathStarBench
+  - https://github.com/example/CustomerFeedback
 - `node_collector/` Node-level syscall + kernel signal collector (eBPF) used to
   compute correlations and select which kernel syscalls/tracepoints best track latency
 
@@ -85,5 +89,5 @@ scheduling decisions.
 
 ## Notes
 
-- Requires `bcc`, `numpy`, and `matplotlib` (for plotting).
+- Requires `bcc` and `numpy`.
 - Run with appropriate privileges for eBPF (typically `sudo`).

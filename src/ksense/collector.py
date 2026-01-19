@@ -10,27 +10,19 @@ from bcc import BPF
 from . import bpf_program
 from .config import (
     BASELINE_WIN_S,
-    ENABLE_PLOT,
     ENERGY_CALIBRATE_AFTER_FREEZE,
     ENERGY_CALIB_WIN_S,
     FREEZE_BASELINE_AFTER_WARMUP,
     GRID_STEP_S,
-    LIVE_PNG,
     MAHAL_MIN_SAMPLES,
     MIN_SCHED_CNT_FOR_BASELINE,
     OUT_CSV,
-    PLOT_WINDOW_MIN,
-    SAVE_PNG_EVERY_S,
     WARMUP_S,
     WINDOW_SEC,
-    HEADLESS,
 )
 from .energy import AdaptiveVolatilityEnergy
 from .friction import mahalanobis_distance_and_direction
 from .helpers import ensure_csv, percentiles_from_subbucket_hist
-from .plotting import LivePlot
-
-
 def main():
     headers = [
         "Time",
@@ -52,19 +44,14 @@ def main():
 
     baseline_w = max(10, int(BASELINE_WIN_S / GRID_STEP_S))
 
-    plot_points = int((PLOT_WINDOW_MIN * 60) / GRID_STEP_S)
-    keep_points = max(plot_points, baseline_w + 100)
+    keep_points = baseline_w + 100
 
-    t_buf = deque(maxlen=keep_points)
     baseline_feat_b = deque(maxlen=baseline_w)
 
     fric_b = deque(maxlen=keep_points)
     dir_b = deque(maxlen=keep_points)
     dfr_b = deque(maxlen=keep_points)
     eng_b = deque(maxlen=keep_points)
-
-    lp = LivePlot() if ENABLE_PLOT else None
-    last_png_save = 0.0
 
     b = BPF(text=bpf_program.bpf_text)
 
@@ -91,7 +78,6 @@ def main():
 
             now = datetime.now()
             ts_str = now.strftime("%Y-%m-%d %H:%M:%S")
-            t_buf.append(now)
 
             # --- read BPF stats ---
             sched_total_ms = sched_avg_ms = sched_p95_ms = sched_p99_ms = sched_max_ms = 0.0
@@ -207,22 +193,6 @@ def main():
                     f"{energy_calc.k_factor:.6f}",
                 ])
 
-            # --- Plot Update ---
-            if lp is not None:
-                t_list = list(t_buf)[-plot_points:]
-                fr_list = list(fric_b)[-plot_points:]
-                en_list = list(eng_b)[-plot_points:]
-                dr_list = list(dir_b)[-plot_points:]
-                lp.update(t_list, fr_list, en_list, dr_list)
-
-                if HEADLESS:
-                    now_t = time.time()
-                    if (now_t - last_png_save) >= SAVE_PNG_EVERY_S:
-                        lp.save(LIVE_PNG)
-                        last_png_save = now_t
-
     except KeyboardInterrupt:
         print("\nStopping. Outputs saved:")
         print(f" - {OUT_CSV}")
-        if ENABLE_PLOT and HEADLESS:
-            print(f" - {LIVE_PNG}")

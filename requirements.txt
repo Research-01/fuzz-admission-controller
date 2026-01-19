@@ -1,4 +1,3 @@
 bcc
-matplotlib
 numpy
 requests
