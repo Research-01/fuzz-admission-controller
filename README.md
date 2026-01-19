@@ -73,10 +73,6 @@ docker run --rm --privileged \
   ksense
 ```
 
-Notes:
-- The container needs `modprobe` (provided by `kmod`) and access to the host kernel headers/modules.
-- If you see "Unable to find kernel headers", install headers on the host or enable `CONFIG_IKHEADERS=m`.
-
 ## Kubernetes
 
 The DaemonSet runs one pod per node. Apply the namespace and DaemonSet with kustomize:
