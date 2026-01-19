@@ -53,7 +53,7 @@ def main():
     dfr_b = deque(maxlen=keep_points)
     eng_b = deque(maxlen=keep_points)
 
-    b = BPF(text=bpf_program.bpf_text)
+    b = BPF(text=bpf_program.bpf_text, cflags=["-Wno-macro-redefined"])
 
     baseline_X = None
     energy_calc = AdaptiveVolatilityEnergy()
