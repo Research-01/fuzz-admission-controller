@@ -6,7 +6,17 @@ a covariance-aware friction signal (Mahalanobis distance) plus a directional sig
 and an adaptive energy signal.
 
 Paper status: This work is under review for IEEE ICFE 2026.
-License: All rights reserved until publication; we will update the license after the paper is accepted.
+
+## License
+
+All rights reserved until publication; we will update the license after the paper is accepted.
+
+## Contact
+
+For collaboration, contact:
+anon@users.noreply.github.com
+anon@users.noreply.github.com
+anon@users.noreply.github.com
 
 ## Layout
 
