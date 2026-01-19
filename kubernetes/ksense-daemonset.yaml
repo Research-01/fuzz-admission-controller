@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: ksense
+  namespace: ksense
   labels:
     app: ksense
 spec:
@@ -27,6 +28,9 @@ spec:
             - name: lib-modules
               mountPath: /lib/modules
               readOnly: true
+            - name: usr-src
+              mountPath: /usr/src
+              readOnly: true
       volumes:
         - name: sys-kernel-debug
           hostPath:
@@ -34,3 +38,6 @@ spec:
         - name: lib-modules
           hostPath:
             path: /lib/modules
+        - name: usr-src
+          hostPath:
+            path: /usr/src

@@ -44,6 +44,7 @@ K-Sense main collector:
 sudo -E python3 main.py
 ```
 
+
 Node-level correlation collector:
 
 ```bash
@@ -58,6 +59,7 @@ python3 scripts/step_response_prober.py
 python3 scripts/latency_p99_prober.py
 ```
 
+
 ## Docker
 
 K-Sense requires privileged access for eBPF. Example:
@@ -68,6 +70,25 @@ docker run --rm --privileged \
   -v /sys/kernel/debug:/sys/kernel/debug \
   -v /lib/modules:/lib/modules:ro \
   ksense
+```
+
+Notes:
+- The container needs `modprobe` (provided by `kmod`) and access to the host kernel headers/modules.
+- If you see "Unable to find kernel headers", install headers on the host or enable `CONFIG_IKHEADERS=m`.
+
+## Kubernetes
+
+The DaemonSet runs one pod per node. Apply the namespace and DaemonSet with kustomize:
+
+```bash
+kubectl apply -k kubernetes/
+```
+
+Check status:
+
+```bash
+kubectl get ds -n ksense
+kubectl get pods -n ksense -l app=ksense -o wide
 ```
 
 ## Research Context (IEEE Paper Summary)

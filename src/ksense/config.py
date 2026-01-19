@@ -7,7 +7,7 @@ GRID_STEP_S = 1  # should match WINDOW_SEC
 # -------------------------
 # Output files
 # -------------------------
-OUT_CSV = "kernel_metrics.csv"
+OUT_CSV = "/tmp/ksense/kernel_metrics.csv"
 
 # -------------------------
 # Energy Settings (ADAPTIVE WINDOW ON |ΔF|)

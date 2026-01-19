@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import csv
+import os
 import time
 from collections import deque
 from datetime import datetime
@@ -7,7 +8,7 @@ from datetime import datetime
 
 INTERVAL_SEC = 1
 HISTORY_LEN = 300
-OUTPUT_CSV = "cpu_psi_metrics.csv"
+OUTPUT_CSV = "/tmp/ksense/cpu_psi_metrics.csv"
 
 
 def read_cpu_times():
@@ -58,6 +59,7 @@ def main():
     print(f"Writing CSV to {OUTPUT_CSV}")
     print("Press Ctrl+C to stop.")
 
+    os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
     with open(OUTPUT_CSV, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([

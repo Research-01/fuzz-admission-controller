@@ -5,6 +5,9 @@ from typing import Iterable
 
 
 def ensure_csv(path: str, header: Iterable[str]) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     if not os.path.exists(path):
         with open(path, "w", newline="") as f:
             csv.writer(f).writerow(header)
