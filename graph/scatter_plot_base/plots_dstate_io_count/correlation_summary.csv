@@ -1,4 +1,0 @@
-Application,Correlation,P-value,N,Output
-Social,0.8272667295518636,0.0,1740,social_dstate_correlation.pdf
-Hotel,0.7745869642583688,0.0,1740,hotel_dstate_correlation.pdf
-Feedback,0.7947185470217073,0.0,1740,feedback_dstate_correlation.pdf

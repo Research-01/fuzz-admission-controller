@@ -85,7 +85,7 @@ def _print_banner():
     print("✅ All events collected and aggregated")
     print("✅ ADDED: total_latency_us column (sum of all latencies in window)")
     print(f"Window: {AGGREGATION_WINDOW}s")
-    print("Output: ./aggregated/node_syscalls_YYYYMMDD.csv")
+    print("Output: node_collector/aggregated/node_syscalls_YYYYMMDD.csv")
     print("=" * 80)
 
 

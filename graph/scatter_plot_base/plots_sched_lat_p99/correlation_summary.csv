@@ -1,4 +1,0 @@
-Application,Correlation,P-value,N,Output
-Social,0.9109126338403717,0.0,1740,social_schedlat_correlation.pdf
-Hotel,0.9083214558239494,0.0,1740,hotel_schedlat_correlation.pdf
-Feedback,0.9673157257841684,0.0,1740,feedback_schedlat_correlation.pdf

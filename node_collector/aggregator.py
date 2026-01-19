@@ -60,9 +60,11 @@ class TimeWindowAggregator:
     def write_to_disk(self):
         if not self.buffer:
             return
-        os.makedirs("./aggregated", exist_ok=True)
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        out_dir = os.path.join(base_dir, "aggregated")
+        os.makedirs(out_dir, exist_ok=True)
         date_str = datetime.now().strftime("%Y%m%d")
-        filename = f"./aggregated/node_syscalls_{date_str}.csv"
+        filename = os.path.join(out_dir, f"node_syscalls_{date_str}.csv")
         write_header = not os.path.exists(filename)
         with open(filename, "a") as f:
             if write_header:
