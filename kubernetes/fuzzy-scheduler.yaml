@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fuzzy-scheduler
+  namespace: ksense
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fuzzy-scheduler
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/binding", "nodes", "endpoints"]
+    verbs: ["get", "list", "watch", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fuzzy-scheduler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fuzzy-scheduler
+subjects:
+  - kind: ServiceAccount
+    name: fuzzy-scheduler
+    namespace: ksense
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fuzzy-scheduler
+  namespace: ksense
+  labels:
+    app: fuzzy-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fuzzy-scheduler
+  template:
+    metadata:
+      labels:
+        app: fuzzy-scheduler
+    spec:
+      serviceAccountName: fuzzy-scheduler
+      containers:
+        - name: scheduler
+          image: your-registry/ksense:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "fuzzy_scheduler.py"]
+          env:
+            - name: FUZZY_SCHEDULER_NAME
+              value: "fuzzy-scheduler"
+            - name: FUZZY_WEBHOOK_SERVICE
+              value: "ksense-fuzzy-webhook"
+            - name: FUZZY_WEBHOOK_NAMESPACE
+              value: "ksense"
+            - name: FUZZY_WEBHOOK_SCHEME
+              value: "https"
+            - name: FUZZY_INSECURE_TLS
+              value: "true"

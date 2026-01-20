@@ -102,6 +102,14 @@ Run locally:
 python3 fuzzy_webhook.py
 ```
 
+With TLS (for Kubernetes webhooks):
+
+```bash
+FUZZY_TLS_CERT=./kubernetes/certs/tls.crt \
+FUZZY_TLS_KEY=./kubernetes/certs/tls.key \
+python3 fuzzy_webhook.py
+```
+
 Endpoints:
 - `GET /healthz`
 - `GET /score` (or `POST /score`)
@@ -113,6 +121,22 @@ Key env vars:
 - `FUZZY_LONG_WIN_S` (default `60`)
 - `FUZZY_BAD_THRESHOLD` (default `3`)
 - `FUZZY_GOOD_THRESHOLD` (default `2`)
+
+### Kubernetes Webhook + Scheduler
+
+Apply manifests:
+
+```bash
+kubectl apply -k kubernetes/
+```
+
+Generate TLS certs, create the secret, and patch the webhook CA bundle:
+
+```bash
+scripts/setup_webhook_tls.sh
+```
+
+Use the custom scheduler by setting `spec.schedulerName: fuzzy-scheduler` on pods.
 
 ## Research Context (IEEE Paper Summary)
 

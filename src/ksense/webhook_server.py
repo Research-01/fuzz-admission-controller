@@ -1,4 +1,5 @@
 import json
+import ssl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .fuzzy_controller import FuzzyController
@@ -71,9 +72,16 @@ class WebhookHandler(BaseHTTPRequestHandler):
         return
 
 
-def run_server(host="0.0.0.0", port=8443):
+def run_server(host="0.0.0.0", port=8443, tls_cert=None, tls_key=None):
     controller = FuzzyController()
     httpd = ThreadingHTTPServer((host, port), WebhookHandler)
     httpd.controller = controller
-    print(f"[fuzzy-webhook] listening on {host}:{port}")
+    if tls_cert and tls_key:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(tls_cert, tls_key)
+        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+        proto = "https"
+    else:
+        proto = "http"
+    print(f"[fuzzy-webhook] listening on {proto}://{host}:{port}")
     httpd.serve_forever()

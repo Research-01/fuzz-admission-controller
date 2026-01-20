@@ -13,4 +13,6 @@ from ksense.webhook_server import run_server
 if __name__ == "__main__":
     host = os.getenv("FUZZY_WEBHOOK_HOST", "0.0.0.0")
     port = int(os.getenv("FUZZY_WEBHOOK_PORT", "8443"))
-    run_server(host=host, port=port)
+    tls_cert = os.getenv("FUZZY_TLS_CERT")
+    tls_key = os.getenv("FUZZY_TLS_KEY")
+    run_server(host=host, port=port, tls_cert=tls_cert, tls_key=tls_key)

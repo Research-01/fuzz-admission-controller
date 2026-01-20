@@ -23,6 +23,8 @@ spec:
             privileged: true
           command: ["python3", "main.py"]
           volumeMounts:
+            - name: ksense-tmp
+              mountPath: /tmp/ksense
             - name: sys-kernel-debug
               mountPath: /sys/kernel/debug
             - name: lib-modules
@@ -31,7 +33,32 @@ spec:
             - name: usr-src
               mountPath: /usr/src
               readOnly: true
+        - name: fuzzy-webhook
+          image: your-registry/ksense:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "fuzzy_webhook.py"]
+          env:
+            - name: FUZZY_WEBHOOK_PORT
+              value: "8443"
+            - name: FUZZY_TLS_CERT
+              value: /etc/fuzzy/tls/tls.crt
+            - name: FUZZY_TLS_KEY
+              value: /etc/fuzzy/tls/tls.key
+          ports:
+            - name: https
+              containerPort: 8443
+          volumeMounts:
+            - name: ksense-tmp
+              mountPath: /tmp/ksense
+            - name: fuzzy-webhook-tls
+              mountPath: /etc/fuzzy/tls
+              readOnly: true
       volumes:
+        - name: ksense-tmp
+          emptyDir: {}
+        - name: fuzzy-webhook-tls
+          secret:
+            secretName: fuzzy-webhook-tls
         - name: sys-kernel-debug
           hostPath:
             path: /sys/kernel/debug

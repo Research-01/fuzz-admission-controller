@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ksense-fuzzy-webhook
+  namespace: ksense
+  labels:
+    app: ksense
+spec:
+  selector:
+    app: ksense
+  ports:
+    - name: https
+      port: 8443
+      targetPort: https
