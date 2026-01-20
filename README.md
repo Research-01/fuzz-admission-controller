@@ -90,6 +90,30 @@ kubectl get ds -n ksense
 kubectl get pods -n ksense -l app=ksense -o wide
 ```
 
+## Fuzzy Admission Webhook (Node-Local)
+
+This repo includes a simple node-local fuzzy controller and validating webhook.
+It reads `/tmp/ksense/kernel_metrics.csv`, plus node CPU/memory/PSI, and returns
+allow/deny decisions with inertia.
+
+Run locally:
+
+```bash
+python3 fuzzy_webhook.py
+```
+
+Endpoints:
+- `GET /healthz`
+- `GET /score` (or `POST /score`)
+- `POST /validate` (Kubernetes AdmissionReview)
+
+Key env vars:
+- `KSENSE_METRICS_CSV` (default `/tmp/ksense/kernel_metrics.csv`)
+- `FUZZY_SHORT_WIN_S` (default `10`)
+- `FUZZY_LONG_WIN_S` (default `60`)
+- `FUZZY_BAD_THRESHOLD` (default `3`)
+- `FUZZY_GOOD_THRESHOLD` (default `2`)
+
 ## Research Context (IEEE Paper Summary)
 
 K-Sense targets edge environments where applications are often black boxes and
