@@ -109,10 +109,11 @@ def main():
         ax2.relim()
         ax2.autoscale_view()
 
-    FuncAnimation(fig1, update_inputs, interval=args.interval)
-    FuncAnimation(fig2, update_scores, interval=args.interval)
+    anim1 = FuncAnimation(fig1, update_inputs, interval=args.interval, cache_frame_data=False)
+    anim2 = FuncAnimation(fig2, update_scores, interval=args.interval, cache_frame_data=False)
 
     plt.show()
+    _ = (anim1, anim2)
 
 
 if __name__ == "__main__":

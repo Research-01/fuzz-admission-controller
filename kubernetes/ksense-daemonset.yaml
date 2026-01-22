@@ -18,7 +18,7 @@ spec:
       containers:
         - name: ksense
           image: your-registry/fuzzy-ksense:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           securityContext:
             privileged: true
           command: ["python3", "main.py"]
@@ -35,7 +35,7 @@ spec:
               readOnly: true
         - name: fuzzy-webhook
           image: your-registry/fuzzy-ksense:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           command: ["python3", "fuzzy_webhook.py"]
           env:
             - name: FUZZY_WEBHOOK_PORT

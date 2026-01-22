@@ -10,7 +10,7 @@ metadata:
   name: fuzzy-scheduler
 rules:
   - apiGroups: [""]
-    resources: ["pods", "pods/binding", "nodes", "endpoints"]
+    resources: ["pods", "pods/binding", "bindings", "nodes", "endpoints"]
     verbs: ["get", "list", "watch", "create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -47,7 +47,7 @@ spec:
       containers:
         - name: scheduler
           image: your-registry/fuzzy-ksense:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           command: ["python3", "fuzzy_scheduler.py"]
           env:
             - name: FUZZY_SCHEDULER_NAME

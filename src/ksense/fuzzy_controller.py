@@ -74,7 +74,14 @@ def _parse_recent_metrics(cfg: FuzzyConfig):
     lines = _read_last_lines(cfg.csv_path, cfg.max_csv_lines)
     if not lines:
         return []
-    headers = lines[0].split(",")
+    header_line = lines[0]
+    if "Time" not in header_line or "Friction" not in header_line:
+        try:
+            with open(cfg.csv_path, "r", encoding="utf-8") as f:
+                header_line = f.readline().strip()
+        except FileNotFoundError:
+            return []
+    headers = header_line.split(",")
     try:
         time_idx = headers.index("Time")
         fric_idx = headers.index("Friction")
@@ -86,7 +93,8 @@ def _parse_recent_metrics(cfg: FuzzyConfig):
     now = datetime.now()
     long_cutoff = now - timedelta(seconds=cfg.long_win_s)
     entries = []
-    for line in lines[1:]:
+    start_idx = 1 if lines and lines[0] == header_line else 0
+    for line in lines[start_idx:]:
         parts = [p.strip() for p in line.split(",")]
         if len(parts) <= max(time_idx, fric_idx, eng_idx):
             continue
