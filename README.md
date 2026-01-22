@@ -1,161 +1,75 @@
-# K-Sense: A Non-Invasive eBPF Framework for QoS Inference
+## Fuzzy Admission Controller (K-Sense based)
 
-This repository contains the reference implementation for K-Sense, a non-invasive
-eBPF-based framework that infers QoS degradation from kernel behavior by computing
-a covariance-aware friction signal (Mahalanobis distance) plus a directional sign
-and an adaptive energy signal.
+This repo builds a node-local fuzzy admission controller on top of K-Sense.
+K-Sense provides kernel friction/energy signals; this controller uses those
+signals plus CPU and PSI to decide admit/deny. K-Sense itself comes from the
+original upstream repo (see references in the paper and source).
 
-Paper status: This work is under review for IEEE ICFE 2026.
+### What runs
 
-## License
+- K-Sense collector (per-node DaemonSet) -> `/tmp/ksense/kernel_metrics.csv`
+- Fuzzy webhook (sidecar in the same DaemonSet)
+- Custom scheduler (Deployment) that calls `/score` on each node
 
-All rights reserved until publication; we will update the license after the paper is accepted.
-
-## Contact
-
-For collaboration, contact:
-anon@users.noreply.github.com
-anon@users.noreply.github.com
-anon@users.noreply.github.com
-
-## Layout
-
-- `src/ksense/` Python package (BPF program, helpers, energy model, main loop)
-- `main.py` Entry point script
-- `scripts/monitor_cpu_psi.py` CPU + PSI monitoring helper script (CSV only, no plotting)
-- `scripts/step_response_prober.py` Step-response load generator for 3 apps (per-second CSV). Uses DeathStarBench and a sentiment-analysis app:
-  - https://github.com/example/DeathStarBench
-  - https://github.com/example/CustomerFeedback
-- `scripts/latency_p99_prober.py` Parallel P99 latency prober for 3 apps (per-interval CSV). Uses the same app sources:
-  - https://github.com/example/DeathStarBench
-  - https://github.com/example/CustomerFeedback
-- `kubernetes/` Kubernetes manifests (namespace, DaemonSet, kustomization)
-- `node_collector/` Node-level syscall + kernel signal collector (eBPF) used to
-  compute correlations and select which kernel syscalls/tracepoints best track latency
-
-## Run
-
-There are two separate components:
-1) `K-Sense` main collector (friction/energy signals)
-2) `node_collector` (kernel event correlation to select signals)
-
-K-Sense main collector:
+### Build image
 
 ```bash
-sudo -E python3 main.py
+docker build -t your-registry/fuzzy-ksense:latest .
+docker push your-registry/fuzzy-ksense:latest
 ```
 
-
-Node-level correlation collector:
-
-```bash
-sudo -E python3 node_collector/main.py
-```
-
-Scripts:
-
-```bash
-python3 scripts/monitor_cpu_psi.py
-python3 scripts/step_response_prober.py
-python3 scripts/latency_p99_prober.py
-```
-
-
-## Docker
-
-K-Sense requires privileged access for eBPF. Example:
-
-```bash
-docker build -t ksense .
-docker run --rm --privileged \
-  -v /sys/kernel/debug:/sys/kernel/debug \
-  -v /lib/modules:/lib/modules:ro \
-  ksense
-```
-
-## Kubernetes
-
-The DaemonSet runs one pod per node. Apply the namespace and DaemonSet with kustomize:
+### Deploy to Kubernetes
 
 ```bash
 kubectl apply -k kubernetes/
+scripts/setup_webhook_tls.sh
 ```
-
-`kernel_metrics.csv` is generated inside the pod filesystem when running as a DaemonSet, under `/tmp/ksense/`.
 
 Check status:
 
 ```bash
 kubectl get ds -n ksense
-kubectl get pods -n ksense -l app=ksense -o wide
+kubectl get pods -n ksense -o wide
 ```
 
-## Fuzzy Admission Webhook (Node-Local)
+### Use the custom scheduler
 
-This repo includes a simple node-local fuzzy controller and validating webhook.
-It reads `/tmp/ksense/kernel_metrics.csv`, plus node CPU/memory/PSI, and returns
-allow/deny decisions with inertia.
+Set this in your pod spec:
 
-Run locally:
-
-```bash
-python3 fuzzy_webhook.py
+```yaml
+spec:
+  schedulerName: fuzzy-scheduler
 ```
 
-With TLS (for Kubernetes webhooks):
+### Webhook endpoints
 
-```bash
-FUZZY_TLS_CERT=./kubernetes/certs/tls.crt \
-FUZZY_TLS_KEY=./kubernetes/certs/tls.key \
-python3 fuzzy_webhook.py
-```
-
-Endpoints:
 - `GET /healthz`
-- `GET /score` (or `POST /score`)
-- `POST /validate` (Kubernetes AdmissionReview)
+- `GET /score` (node score JSON)
+- `POST /validate` (AdmissionReview)
 
-Key env vars:
-- `KSENSE_METRICS_CSV` (default `/tmp/ksense/kernel_metrics.csv`)
-- `FUZZY_SHORT_WIN_S` (default `10`)
-- `FUZZY_LONG_WIN_S` (default `60`)
-- `FUZZY_BAD_THRESHOLD` (default `3`)
-- `FUZZY_GOOD_THRESHOLD` (default `2`)
+### Logs + CSV outputs
 
-### Kubernetes Webhook + Scheduler
+Inside the DaemonSet pod:
+- K-Sense: `/tmp/ksense/kernel_metrics.csv`
+- Fuzzy inputs (1s): `/tmp/ksense/fuzzy_monitor.csv`
+- Fuzzy scores: `/tmp/ksense/fuzzy_score.csv`
 
-Apply manifests:
+Example:
 
 ```bash
-kubectl apply -k kubernetes/
+kubectl exec -n ksense <pod> -c fuzzy-webhook -- tail -n 5 /tmp/ksense/fuzzy_score.csv
 ```
 
-Generate TLS certs, create the secret, and patch the webhook CA bundle:
+### Offline plotting
+
+Copy the CSVs to your machine and plot:
 
 ```bash
-scripts/setup_webhook_tls.sh
+POD=$(kubectl get pods -n ksense -l app=ksense -o jsonpath='{.items[0].metadata.name}')
+kubectl cp -n ksense ${POD}:/tmp/ksense/fuzzy_monitor.csv /tmp/fuzzy_monitor.csv
+kubectl cp -n ksense ${POD}:/tmp/ksense/fuzzy_score.csv /tmp/fuzzy_score.csv
+
+python3 scripts/realtime_fuzzy_plot.py \
+  --inputs /tmp/fuzzy_monitor.csv \
+  --scores /tmp/fuzzy_score.csv
 ```
-
-Use the custom scheduler by setting `spec.schedulerName: fuzzy-scheduler` on pods.
-
-## Research Context (IEEE Paper Summary)
-
-K-Sense targets edge environments where applications are often black boxes and
-application-level instrumentation is impractical. It relies on a small set of
-kernel-level delay signals (CPU scheduling latency, SoftIRQ processing time, and
-D-state I/O latency) and models the system state as a point in a multi-dimensional
-feature space. The deviation from a calibrated baseline is quantified using the
-Mahalanobis distance (friction), while a direction sign indicates whether the
-system is above or below the baseline. An adaptive energy signal captures short-
-term instability in friction.
-
-The framework is evaluated with real workloads (DeathStarBench microservices and
-a sentiment-analysis application). Results show that friction tracks application
-P99 latency under changing load and remains informative when CPU utilization and
-PSI saturate, enabling non-invasive QoS inference for admission control and
-scheduling decisions.
-
-## Notes
-
-- Requires `bcc` and `numpy`.
-- Run with appropriate privileges for eBPF (typically `sudo`).
