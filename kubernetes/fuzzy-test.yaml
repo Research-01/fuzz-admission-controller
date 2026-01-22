@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fuzzy-test
+spec:
+  schedulerName: fuzzy-scheduler
+  containers:
+    - name: pause
+      image: k8s.gcr.io/pause:3.9

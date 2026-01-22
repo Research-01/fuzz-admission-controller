@@ -1,3 +1,4 @@
+import math
 import os
 import threading
 from dataclasses import dataclass
@@ -203,7 +204,11 @@ class ResourceSampler:
                                 pass
         if not psi_vals:
             return None
-        return max(psi_vals)
+        psi = max(psi_vals)
+        # Kernel PSI avg is expressed as a percentage. Normalize to 0-1 if needed.
+        if psi > 1.0:
+            psi = psi / 100.0
+        return psi
 
 
 class FuzzyController:
@@ -240,11 +245,8 @@ class FuzzyController:
         psi_h = _high_mf(psi, self.cfg.psi_mid, self.cfg.psi_high)
 
         risk_high = max(
-            fric_h,
-            eng_h,
+            min(fric_h, eng_h),
             min(psi_h, max(cpu_h, mem_h)),
-            min(fric_m, eng_h),
-            min(fric_h, eng_m),
         )
 
         risk_med = max(
@@ -320,10 +322,15 @@ class FuzzyController:
         mem_val = mem or 0.0
         psi_val = psi or 0.0
 
-        fric_thr = _dynamic_thresholds(fric_vals_long, cfg.fric_min_low, cfg.fric_min_mid, cfg.fric_min_high)
-        eng_thr = _dynamic_thresholds(eng_vals_long, cfg.eng_min_low, cfg.eng_min_mid, cfg.eng_min_high)
+        fric_thr_raw = _dynamic_thresholds(fric_vals_long, cfg.fric_min_low, cfg.fric_min_mid, cfg.fric_min_high)
+        eng_thr_raw = _dynamic_thresholds(eng_vals_long, cfg.eng_min_low, cfg.eng_min_mid, cfg.eng_min_high)
 
-        score, level = self._fuzzy_risk(fric_val, eng_val, cpu_val, mem_val, psi_val, fric_thr, eng_thr)
+        fric_val_log = math.log1p(fric_val)
+        eng_val_log = math.log1p(eng_val)
+        fric_thr = tuple(math.log1p(v) for v in fric_thr_raw)
+        eng_thr = tuple(math.log1p(v) for v in eng_thr_raw)
+
+        score, level = self._fuzzy_risk(fric_val_log, eng_val_log, cpu_val, mem_val, psi_val, fric_thr, eng_thr)
 
         return {
             "decision": "allow",
@@ -337,8 +344,10 @@ class FuzzyController:
                 "cpu_util": cpu,
                 "mem_util": mem,
                 "psi_avg10": psi,
-                "friction_thresholds": fric_thr,
-                "energy_thresholds": eng_thr,
+                "friction_thresholds": fric_thr_raw,
+                "energy_thresholds": eng_thr_raw,
+                "friction_log": fric_val_log,
+                "energy_log": eng_val_log,
             },
             "missing": missing,
         }

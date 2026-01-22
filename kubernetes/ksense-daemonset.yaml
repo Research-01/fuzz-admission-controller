@@ -17,7 +17,7 @@ spec:
       hostPID: true
       containers:
         - name: ksense
-          image: your-registry/ksense:latest
+          image: your-registry/fuzzy-ksense:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -34,7 +34,7 @@ spec:
               mountPath: /usr/src
               readOnly: true
         - name: fuzzy-webhook
-          image: your-registry/ksense:latest
+          image: your-registry/fuzzy-ksense:latest
           imagePullPolicy: IfNotPresent
           command: ["python3", "fuzzy_webhook.py"]
           env:

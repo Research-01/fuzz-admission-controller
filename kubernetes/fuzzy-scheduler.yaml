@@ -46,7 +46,7 @@ spec:
       serviceAccountName: fuzzy-scheduler
       containers:
         - name: scheduler
-          image: your-registry/ksense:latest
+          image: your-registry/fuzzy-ksense:latest
           imagePullPolicy: IfNotPresent
           command: ["python3", "fuzzy_scheduler.py"]
           env:
