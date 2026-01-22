@@ -196,7 +196,7 @@ class FuzzyController:
         self._last_decision = "allow"
         self._sampler = ResourceSampler()
         self._last_monitor_ts = 0.0
-        ensure_csv(self.cfg.monitor_csv, ["Time", "FrictionSigned", "Energy", "CPUUtil", "PSI"])
+        ensure_csv(self.cfg.monitor_csv, ["Time", "FrictionSigned", "Energy", "CPUUtil", "PSI", "Score"])
 
     def _fuzzy_score(self, fric, eng, cpu, psi):
         # Fixed input axes:
@@ -367,6 +367,7 @@ class FuzzyController:
                 eng or 0.0,
                 cpu or 0.0,
                 psi or 0.0,
+                1.0,
             )
             return {
                 "decision": "deny",
@@ -403,17 +404,17 @@ class FuzzyController:
             },
             "missing": missing,
         }
-        self._write_monitor_sample(fric_val, eng_val, cpu_val, psi_val)
+        self._write_monitor_sample(fric_val, eng_val, cpu_val, psi_val, score)
         return report
 
-    def _write_monitor_sample(self, friction_signed, energy, cpu, psi):
+    def _write_monitor_sample(self, friction_signed, energy, cpu, psi, score):
         now = time.time()
         if now - self._last_monitor_ts < 1.0:
             return
         self._last_monitor_ts = now
         ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(self.cfg.monitor_csv, "a", newline="") as f:
-            f.write(f"{ts_str},{friction_signed:.6f},{energy:.6f},{cpu:.6f},{psi:.6f}\n")
+            f.write(f"{ts_str},{friction_signed:.6f},{energy:.6f},{cpu:.6f},{psi:.6f},{score:.3f}\n")
 
     def decide(self):
         with self._lock:
