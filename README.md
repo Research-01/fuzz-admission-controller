@@ -11,13 +11,6 @@ original upstream repo (see references in the paper and source).
 - Fuzzy webhook (sidecar in the same DaemonSet)
 - Custom scheduler (Deployment) that calls `/score` on each node
 
-### Build image
-
-```bash
-docker build -t your-registry/fuzzy-ksense:latest .
-docker push your-registry/fuzzy-ksense:latest
-```
-
 ### Deploy to Kubernetes
 
 ```bash
