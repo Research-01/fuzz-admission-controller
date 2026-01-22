@@ -1,10 +1,12 @@
 import math
 import os
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
 
+from .helpers import ensure_csv
 
 @dataclass
 class FuzzyConfig:
@@ -17,28 +19,11 @@ class FuzzyConfig:
     good_threshold: int = int(os.getenv("FUZZY_GOOD_THRESHOLD", "2"))
 
     allow_on_missing: bool = os.getenv("FUZZY_ALLOW_ON_MISSING", "false").lower() == "true"
+    monitor_csv: str = os.getenv("FUZZY_MONITOR_CSV", "/tmp/ksense/fuzzy_monitor.csv")
 
-    # Resource thresholds (fractions for CPU/Mem, PSI avg10)
-    cpu_low: float = float(os.getenv("FUZZY_CPU_LOW", "0.50"))
-    cpu_mid: float = float(os.getenv("FUZZY_CPU_MID", "0.70"))
-    cpu_high: float = float(os.getenv("FUZZY_CPU_HIGH", "0.85"))
-
-    mem_low: float = float(os.getenv("FUZZY_MEM_LOW", "0.60"))
-    mem_mid: float = float(os.getenv("FUZZY_MEM_MID", "0.75"))
-    mem_high: float = float(os.getenv("FUZZY_MEM_HIGH", "0.90"))
-
-    psi_low: float = float(os.getenv("FUZZY_PSI_LOW", "0.03"))
-    psi_mid: float = float(os.getenv("FUZZY_PSI_MID", "0.10"))
-    psi_high: float = float(os.getenv("FUZZY_PSI_HIGH", "0.20"))
-
-    # Minimum thresholds to avoid overly permissive dynamic scaling.
-    fric_min_low: float = float(os.getenv("FUZZY_FRIC_MIN_LOW", "1.0"))
-    fric_min_mid: float = float(os.getenv("FUZZY_FRIC_MIN_MID", "2.0"))
-    fric_min_high: float = float(os.getenv("FUZZY_FRIC_MIN_HIGH", "3.5"))
-
-    eng_min_low: float = float(os.getenv("FUZZY_ENG_MIN_LOW", "0.05"))
-    eng_min_mid: float = float(os.getenv("FUZZY_ENG_MIN_MID", "0.15"))
-    eng_min_high: float = float(os.getenv("FUZZY_ENG_MIN_HIGH", "0.30"))
+    # Scaling factors to map raw values onto the fixed membership axes.
+    fric_scale: float = float(os.getenv("FUZZY_FRIC_SCALE", "1.0"))
+    eng_scale: float = float(os.getenv("FUZZY_ENG_SCALE", "1.0"))
 
 
 def _percentile(values, p):
@@ -49,42 +34,30 @@ def _percentile(values, p):
     return vals[max(0, min(k, len(vals) - 1))]
 
 
-def _dynamic_thresholds(values, min_low, min_mid, min_high):
-    if not values:
-        return min_low, min_mid, min_high
-    p50 = _percentile(values, 50) or 0.0
-    p90 = _percentile(values, 90) or 0.0
-    p99 = _percentile(values, 99) or 0.0
-    low = max(p50, min_low)
-    mid = max(p90, min_mid, low + 1e-6)
-    high = max(p99, min_high, mid + 1e-6)
-    return low, mid, high
-
-
-def _low_mf(x, low, mid):
-    if x <= low:
-        return 1.0
-    if x >= mid:
+def _trimf(x, params):
+    a, b, c = params
+    if x <= a or x >= c:
         return 0.0
-    return (mid - x) / (mid - low)
-
-
-def _med_mf(x, low, mid, high):
-    if x <= low or x >= high:
-        return 0.0
-    if x == mid:
+    if x == b:
         return 1.0
-    if x < mid:
-        return (x - low) / (mid - low)
-    return (high - x) / (high - mid)
+    if x < b:
+        return (x - a) / (b - a)
+    return (c - x) / (c - b)
 
 
-def _high_mf(x, mid, high):
-    if x <= mid:
+def _trapmf(x, params):
+    a, b, c, d = params
+    if x <= a or x >= d:
         return 0.0
-    if x >= high:
+    if b <= x <= c:
         return 1.0
-    return (x - mid) / (high - mid)
+    if x < b:
+        return (x - a) / (b - a) if b != a else 0.0
+    return (d - x) / (d - c) if d != c else 0.0
+
+
+def _gaussmf(x, mean, sigma):
+    return math.exp(-((x - mean) ** 2) / (2 * sigma ** 2))
 
 
 def _read_last_lines(path, max_lines, max_bytes=1024 * 1024):
@@ -108,6 +81,7 @@ def _parse_recent_metrics(cfg: FuzzyConfig):
         time_idx = headers.index("Time")
         fric_idx = headers.index("Friction")
         eng_idx = headers.index("Energy")
+        dir_idx = headers.index("Direction")
     except ValueError:
         return []
 
@@ -127,6 +101,7 @@ def _parse_recent_metrics(cfg: FuzzyConfig):
             continue
         fric = parts[fric_idx]
         eng = parts[eng_idx]
+        direction = parts[dir_idx]
         try:
             fric_val = float(fric) if fric else None
         except ValueError:
@@ -135,7 +110,11 @@ def _parse_recent_metrics(cfg: FuzzyConfig):
             eng_val = float(eng) if eng else None
         except ValueError:
             eng_val = None
-        entries.append((ts_dt, fric_val, eng_val))
+        try:
+            dir_val = float(direction) if direction else None
+        except ValueError:
+            dir_val = None
+        entries.append((ts_dt, fric_val, eng_val, dir_val))
     return entries
 
 
@@ -219,55 +198,76 @@ class FuzzyController:
         self._good = 0
         self._last_decision = "allow"
         self._sampler = ResourceSampler()
+        self._last_monitor_ts = 0.0
+        ensure_csv(self.cfg.monitor_csv, ["Time", "FrictionSigned", "Energy", "CPUUtil", "PSI"])
 
-    def _fuzzy_risk(self, fric, eng, cpu, mem, psi, fric_thr, eng_thr):
-        fric_low, fric_mid, fric_high = fric_thr
-        eng_low, eng_mid, eng_high = eng_thr
+    def _fuzzy_score(self, fric, eng, cpu, psi):
+        # Fixed input axes:
+        # CPU: 0-100, PSI: 0-100, Friction: -300..300, Energy: 0..300
+        cpu_pct = max(0.0, min(100.0, cpu * 100.0))
+        psi_pct = max(0.0, min(100.0, psi * 100.0))
+        fric_scaled = fric / self.cfg.fric_scale if self.cfg.fric_scale else fric
+        eng_scaled = eng / self.cfg.eng_scale if self.cfg.eng_scale else eng
+        fric_val = max(-300.0, min(300.0, fric_scaled))
+        eng_val = max(0.0, min(300.0, eng_scaled))
 
-        fric_l = _low_mf(fric, fric_low, fric_mid)
-        fric_m = _med_mf(fric, fric_low, fric_mid, fric_high)
-        fric_h = _high_mf(fric, fric_mid, fric_high)
+        # CPU membership
+        cpu_normal = _trapmf(cpu_pct, [0, 0, 60, 80])
+        cpu_high = _trapmf(cpu_pct, [60, 80, 100, 100])
 
-        eng_l = _low_mf(eng, eng_low, eng_mid)
-        eng_m = _med_mf(eng, eng_low, eng_mid, eng_high)
-        eng_h = _high_mf(eng, eng_mid, eng_high)
+        # PSI membership
+        psi_low = _trapmf(psi_pct, [0, 0, 20, 40])
+        psi_med = _trimf(psi_pct, [20, 50, 80])
+        psi_high = _trapmf(psi_pct, [60, 80, 100, 100])
 
-        cpu_l = _low_mf(cpu, self.cfg.cpu_low, self.cfg.cpu_mid)
-        cpu_m = _med_mf(cpu, self.cfg.cpu_low, self.cfg.cpu_mid, self.cfg.cpu_high)
-        cpu_h = _high_mf(cpu, self.cfg.cpu_mid, self.cfg.cpu_high)
+        # Friction membership (-300..300)
+        fric_under = _trapmf(fric_val, [-300, -300, 0, 50])
+        fric_short = _gaussmf(fric_val, 50, 25)
+        fric_mod = _gaussmf(fric_val, 125, 40)
+        fric_long = _trapmf(fric_val, [150, 250, 300, 300])
 
-        mem_l = _low_mf(mem, self.cfg.mem_low, self.cfg.mem_mid)
-        mem_m = _med_mf(mem, self.cfg.mem_low, self.cfg.mem_mid, self.cfg.mem_high)
-        mem_h = _high_mf(mem, self.cfg.mem_mid, self.cfg.mem_high)
+        # Energy membership (0..300)
+        eng_short = _trapmf(eng_val, [0, 0, 90, 150])
+        eng_mod = _gaussmf(eng_val, 150, 45)
+        eng_long = _trapmf(eng_val, [150, 210, 300, 300])
 
-        psi_l = _low_mf(psi, self.cfg.psi_low, self.cfg.psi_mid)
-        psi_m = _med_mf(psi, self.cfg.psi_low, self.cfg.psi_mid, self.cfg.psi_high)
-        psi_h = _high_mf(psi, self.cfg.psi_mid, self.cfg.psi_high)
+        # Output memberships (0..100)
+        out_under = [0, 0, 15, 30]
+        out_short = [15, 40, 65]
+        out_mod = [40, 65, 90]
+        out_long = [65, 90, 100, 100]
 
-        risk_high = max(
-            min(fric_h, eng_h),
-            min(psi_h, max(cpu_h, mem_h)),
-        )
+        # Rule base (conservative)
+        r_under = min(fric_under, cpu_normal, psi_low)
+        r_short = max(min(fric_short, eng_short), min(fric_short, psi_med), min(eng_short, psi_med))
+        r_mod = max(min(fric_mod, eng_mod), min(psi_med, cpu_high), min(eng_mod, cpu_high))
+        r_long = max(fric_long, eng_long, min(psi_high, cpu_high), min(fric_mod, eng_long), min(fric_long, eng_mod))
 
-        risk_med = max(
-            min(fric_m, eng_m),
-            min(psi_m, max(cpu_m, mem_m)),
-            max(fric_m, eng_m),
-        )
+        # Aggregate output membership and defuzzify via centroid
+        num = 0.0
+        den = 0.0
+        for x in range(0, 101):
+            mu_under = min(r_under, _trapmf(x, out_under))
+            mu_short = min(r_short, _trimf(x, out_short))
+            mu_mod = min(r_mod, _trimf(x, out_mod))
+            mu_long = min(r_long, _trapmf(x, out_long))
+            mu = max(mu_under, mu_short, mu_mod, mu_long)
+            num += x * mu
+            den += mu
+        score = (num / den) if den > 0 else 0.0
 
-        risk_low = min(fric_l, eng_l, psi_l, cpu_l, mem_l)
-
-        denom = risk_low + risk_med + risk_high
-        if denom <= 0:
-            return 0.0, "low"
-        score = (0.2 * risk_low + 0.6 * risk_med + 1.0 * risk_high) / denom
-        if score >= 0.70:
+        if score >= 70.0:
             level = "high"
-        elif score >= 0.45:
+        elif score >= 45.0:
             level = "medium"
         else:
             level = "low"
-        return score, level
+        return score, level, {
+            "cpu_pct": cpu_pct,
+            "psi_pct": psi_pct,
+            "friction_scaled": fric_val,
+            "energy_scaled": eng_val,
+        }
 
     def evaluate(self):
         cfg = self.cfg
@@ -279,8 +279,9 @@ class FuzzyController:
         eng_vals_short = []
         fric_vals_long = []
         eng_vals_long = []
+        last_direction = None
 
-        for ts, fric, eng in entries:
+        for ts, fric, eng, direction in entries:
             if fric is not None:
                 fric_vals_long.append(fric)
                 if ts >= short_cutoff:
@@ -289,24 +290,35 @@ class FuzzyController:
                 eng_vals_long.append(eng)
                 if ts >= short_cutoff:
                     eng_vals_short.append(eng)
+            if direction is not None:
+                last_direction = direction
 
-        fric_long_p99 = _percentile(fric_vals_long, 99) if fric_vals_long else None
+        fric_abs_long = [abs(v) for v in fric_vals_long]
+        fric_abs_short = [abs(v) for v in fric_vals_short]
+        fric_long_p99 = _percentile(fric_abs_long, 99) if fric_abs_long else None
         eng_long_p99 = _percentile(eng_vals_long, 99) if eng_vals_long else None
-        fric_short_p99 = _percentile(fric_vals_short, 99) if fric_vals_short else None
+        fric_short_p99 = _percentile(fric_abs_short, 99) if fric_abs_short else None
         eng_short_p99 = _percentile(eng_vals_short, 99) if eng_vals_short else None
 
         fric_candidates = [v for v in [fric_short_p99, fric_long_p99] if v is not None]
         eng_candidates = [v for v in [eng_short_p99, eng_long_p99] if v is not None]
         fric = max(fric_candidates) if fric_candidates else None
         eng = max(eng_candidates) if eng_candidates else None
+        if fric is not None and last_direction is not None:
+            fric = fric * last_direction
 
         cpu = self._sampler.cpu_util()
-        mem = self._sampler.mem_util()
         psi = self._sampler.psi()
 
-        missing = [name for name, val in [("friction", fric), ("energy", eng), ("cpu", cpu), ("mem", mem), ("psi", psi)] if val is None]
+        missing = [name for name, val in [("friction", fric), ("energy", eng), ("cpu", cpu), ("psi", psi)] if val is None]
         critical_missing = [name for name in missing if name in ("friction", "energy")]
         if critical_missing and not cfg.allow_on_missing:
+            self._write_monitor_sample(
+                (fric or 0.0) * (last_direction or 1.0),
+                eng or 0.0,
+                cpu or 0.0,
+                psi or 0.0,
+            )
             return {
                 "decision": "deny",
                 "reason": f"missing metrics: {', '.join(missing)}",
@@ -319,38 +331,40 @@ class FuzzyController:
         fric_val = fric or 0.0
         eng_val = eng or 0.0
         cpu_val = cpu or 0.0
-        mem_val = mem or 0.0
         psi_val = psi or 0.0
+        score, level, scaled = self._fuzzy_score(fric_val, eng_val, cpu_val, psi_val)
 
-        fric_thr_raw = _dynamic_thresholds(fric_vals_long, cfg.fric_min_low, cfg.fric_min_mid, cfg.fric_min_high)
-        eng_thr_raw = _dynamic_thresholds(eng_vals_long, cfg.eng_min_low, cfg.eng_min_mid, cfg.eng_min_high)
-
-        fric_val_log = math.log1p(fric_val)
-        eng_val_log = math.log1p(eng_val)
-        fric_thr = tuple(math.log1p(v) for v in fric_thr_raw)
-        eng_thr = tuple(math.log1p(v) for v in eng_thr_raw)
-
-        score, level = self._fuzzy_risk(fric_val_log, eng_val_log, cpu_val, mem_val, psi_val, fric_thr, eng_thr)
-
-        return {
+        report = {
             "decision": "allow",
             "score": score,
             "level": level,
             "metrics": {
+                "direction": last_direction,
+                "friction_signed": fric_val,
                 "friction_p99_short": fric_short_p99,
                 "friction_p99_long": fric_long_p99,
                 "energy_p99_short": eng_short_p99,
                 "energy_p99_long": eng_long_p99,
                 "cpu_util": cpu,
-                "mem_util": mem,
                 "psi_avg10": psi,
-                "friction_thresholds": fric_thr_raw,
-                "energy_thresholds": eng_thr_raw,
-                "friction_log": fric_val_log,
-                "energy_log": eng_val_log,
+                "cpu_pct": scaled["cpu_pct"],
+                "psi_pct": scaled["psi_pct"],
+                "friction_scaled": scaled["friction_scaled"],
+                "energy_scaled": scaled["energy_scaled"],
             },
             "missing": missing,
         }
+        self._write_monitor_sample(fric_val, eng_val, cpu_val, psi_val)
+        return report
+
+    def _write_monitor_sample(self, friction_signed, energy, cpu, psi):
+        now = time.time()
+        if now - self._last_monitor_ts < 1.0:
+            return
+        self._last_monitor_ts = now
+        ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(self.cfg.monitor_csv, "a", newline="") as f:
+            f.write(f"{ts_str},{friction_signed:.6f},{energy:.6f},{cpu:.6f},{psi:.6f}\n")
 
     def decide(self):
         with self._lock:
