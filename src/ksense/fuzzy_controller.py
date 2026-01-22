@@ -237,20 +237,74 @@ class FuzzyController:
         out_mod = [40, 65, 90]
         out_long = [65, 90, 100, 100]
 
-        # Rule base (conservative)
-        r_under = min(fric_under, cpu_normal, psi_low)
-        r_short = max(min(fric_short, eng_short), min(fric_short, psi_med), min(eng_short, psi_med))
-        r_mod = max(min(fric_mod, eng_mod), min(psi_med, cpu_high), min(eng_mod, cpu_high))
-        r_long = max(fric_long, eng_long, min(psi_high, cpu_high), min(fric_mod, eng_long), min(fric_long, eng_mod))
+        cpu_states = {"normal": cpu_normal, "high": cpu_high}
+        psi_states = {"low": psi_low, "med": psi_med, "high": psi_high}
+        fric_states = {
+            "under": fric_under,
+            "short": fric_short,
+            "mod": fric_mod,
+            "long": fric_long,
+        }
+        eng_states = {"short": eng_short, "mod": eng_mod, "long": eng_long}
+
+        rule_table = {
+            ("normal", "low"): {
+                "under": {"short": "under", "mod": "short", "long": "short"},
+                "short": {"short": "short", "mod": "short", "long": "mod"},
+                "mod": {"short": "short", "mod": "mod", "long": "mod"},
+                "long": {"short": "mod", "mod": "long", "long": "long"},
+            },
+            ("normal", "med"): {
+                "under": {"short": "short", "mod": "short", "long": "mod"},
+                "short": {"short": "short", "mod": "mod", "long": "mod"},
+                "mod": {"short": "mod", "mod": "mod", "long": "long"},
+                "long": {"short": "mod", "mod": "long", "long": "long"},
+            },
+            ("normal", "high"): {
+                "under": {"short": "short", "mod": "mod", "long": "mod"},
+                "short": {"short": "mod", "mod": "mod", "long": "long"},
+                "mod": {"short": "mod", "mod": "long", "long": "long"},
+                "long": {"short": "long", "mod": "long", "long": "long"},
+            },
+            ("high", "low"): {
+                "under": {"short": "short", "mod": "short", "long": "short"},
+                "short": {"short": "short", "mod": "mod", "long": "mod"},
+                "mod": {"short": "mod", "mod": "long", "long": "long"},
+                "long": {"short": "long", "mod": "long", "long": "long"},
+            },
+            ("high", "med"): {
+                "under": {"short": "short", "mod": "short", "long": "mod"},
+                "short": {"short": "mod", "mod": "mod", "long": "mod"},
+                "mod": {"short": "mod", "mod": "long", "long": "long"},
+                "long": {"short": "long", "mod": "long", "long": "long"},
+            },
+            ("high", "high"): {
+                "under": {"short": "mod", "mod": "mod", "long": "long"},
+                "short": {"short": "mod", "mod": "mod", "long": "long"},
+                "mod": {"short": "mod", "mod": "long", "long": "long"},
+                "long": {"short": "long", "mod": "long", "long": "long"},
+            },
+        }
+
+        out_strength = {"under": 0.0, "short": 0.0, "mod": 0.0, "long": 0.0}
+        for cpu_key, cpu_mu in cpu_states.items():
+            for psi_key, psi_mu in psi_states.items():
+                table = rule_table[(cpu_key, psi_key)]
+                for fric_key, fric_mu in fric_states.items():
+                    for eng_key, eng_mu in eng_states.items():
+                        out_key = table[fric_key][eng_key]
+                        strength = min(cpu_mu, psi_mu, fric_mu, eng_mu)
+                        if strength > out_strength[out_key]:
+                            out_strength[out_key] = strength
 
         # Aggregate output membership and defuzzify via centroid
         num = 0.0
         den = 0.0
         for x in range(0, 101):
-            mu_under = min(r_under, _trapmf(x, out_under))
-            mu_short = min(r_short, _trimf(x, out_short))
-            mu_mod = min(r_mod, _trimf(x, out_mod))
-            mu_long = min(r_long, _trapmf(x, out_long))
+            mu_under = min(out_strength["under"], _trapmf(x, out_under))
+            mu_short = min(out_strength["short"], _trimf(x, out_short))
+            mu_mod = min(out_strength["mod"], _trimf(x, out_mod))
+            mu_long = min(out_strength["long"], _trapmf(x, out_long))
             mu = max(mu_under, mu_short, mu_mod, mu_long)
             num += x * mu
             den += mu
