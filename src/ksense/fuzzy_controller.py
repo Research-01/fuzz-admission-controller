@@ -21,9 +21,6 @@ class FuzzyConfig:
     allow_on_missing: bool = os.getenv("FUZZY_ALLOW_ON_MISSING", "false").lower() == "true"
     monitor_csv: str = os.getenv("FUZZY_MONITOR_CSV", "/tmp/ksense/fuzzy_monitor.csv")
 
-    # Scaling factors to map raw values onto the fixed membership axes.
-    fric_scale: float = float(os.getenv("FUZZY_FRIC_SCALE", "1.0"))
-    eng_scale: float = float(os.getenv("FUZZY_ENG_SCALE", "1.0"))
 
 
 def _percentile(values, p):
@@ -206,10 +203,8 @@ class FuzzyController:
         # CPU: 0-100, PSI: 0-100, Friction: -300..300, Energy: 0..300
         cpu_pct = max(0.0, min(100.0, cpu * 100.0))
         psi_pct = max(0.0, min(100.0, psi * 100.0))
-        fric_scaled = fric / self.cfg.fric_scale if self.cfg.fric_scale else fric
-        eng_scaled = eng / self.cfg.eng_scale if self.cfg.eng_scale else eng
-        fric_val = max(-300.0, min(300.0, fric_scaled))
-        eng_val = max(0.0, min(300.0, eng_scaled))
+        fric_val = max(-300.0, min(300.0, fric))
+        eng_val = max(0.0, min(300.0, eng))
 
         # CPU membership
         cpu_normal = _trapmf(cpu_pct, [0, 0, 60, 80])

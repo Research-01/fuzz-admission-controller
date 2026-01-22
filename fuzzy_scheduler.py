@@ -18,7 +18,7 @@ WEBHOOK_NAMESPACE = os.getenv("FUZZY_WEBHOOK_NAMESPACE", "ksense")
 WEBHOOK_PORT = int(os.getenv("FUZZY_WEBHOOK_PORT", "8443"))
 WEBHOOK_SCHEME = os.getenv("FUZZY_WEBHOOK_SCHEME", "https")
 INSECURE = os.getenv("FUZZY_INSECURE_TLS", "true").lower() == "true"
-POLL_INTERVAL = float(os.getenv("FUZZY_SCHEDULER_POLL_S", "2"))
+POLL_INTERVAL = float(os.getenv("FUZZY_SCHEDULER_POLL_S", "10"))
 
 
 def _load_kube():
