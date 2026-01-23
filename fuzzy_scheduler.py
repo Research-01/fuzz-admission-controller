@@ -112,6 +112,7 @@ def main():
         for pod in pods:
             node_name = _choose_node(core)
             if not node_name:
+                print(f"[fuzzy-scheduler] no eligible node for {pod.metadata.namespace}/{pod.metadata.name}")
                 continue
             try:
                 _bind_pod(core, pod, node_name)
