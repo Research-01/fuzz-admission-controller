@@ -53,6 +53,13 @@ def _score_endpoint(ip, port):
         return None
 
 
+def _node_from_endpoint_ip(core, ip):
+    pods = core.list_pod_for_all_namespaces(field_selector=f"status.podIP={ip}").items
+    if pods and pods[0].spec.node_name:
+        return pods[0].spec.node_name
+    return None
+
+
 def _choose_node(core):
     endpoints = _list_webhook_endpoints(core)
     best = None
@@ -75,6 +82,10 @@ def _choose_node(core):
         for addr in subset.addresses or []:
             if addr.ip == best["ip"] and addr.node_name:
                 return addr.node_name
+    # Fallback: resolve endpoint IP -> pod -> node
+    node_from_ip = _node_from_endpoint_ip(core, best["ip"])
+    if node_from_ip:
+        return node_from_ip
     # Fallback: if only one node, use it
     nodes = core.list_node().items
     if len(nodes) == 1:
@@ -97,10 +108,26 @@ def _pending_pods(core):
 
 
 def _bind_pod(core, pod, node_name):
+    if not node_name:
+        print(f"[fuzzy-scheduler] skip bind, empty node name for {pod.metadata.namespace}/{pod.metadata.name}")
+        return False
     target = client.V1ObjectReference(kind="Node", api_version="v1", name=node_name)
-    meta = client.V1ObjectMeta(name=pod.metadata.name)
-    binding = client.V1Binding(target=target, metadata=meta)
-    core.create_namespaced_binding(pod.metadata.namespace, binding)
+    binding = client.V1Binding(
+        metadata=client.V1ObjectMeta(
+            name=pod.metadata.name,
+            namespace=pod.metadata.namespace,
+        ),
+        target=target,
+    )
+    if hasattr(core, "create_namespaced_pod_binding"):
+        core.create_namespaced_pod_binding(
+            pod.metadata.name,
+            pod.metadata.namespace,
+            binding,
+        )
+    else:
+        core.create_namespaced_binding(pod.metadata.namespace, binding)
+    return True
 
 
 def main():
@@ -115,9 +142,9 @@ def main():
                 print(f"[fuzzy-scheduler] no eligible node for {pod.metadata.namespace}/{pod.metadata.name}")
                 continue
             try:
-                _bind_pod(core, pod, node_name)
-                print(f"[fuzzy-scheduler] bound {pod.metadata.namespace}/{pod.metadata.name} -> {node_name}")
-            except client.exceptions.ApiException as exc:
+                if _bind_pod(core, pod, node_name):
+                    print(f"[fuzzy-scheduler] bound {pod.metadata.namespace}/{pod.metadata.name} -> {node_name}")
+            except (client.exceptions.ApiException, ValueError) as exc:
                 print(f"[fuzzy-scheduler] bind failed: {exc}")
         time.sleep(POLL_INTERVAL)
 
