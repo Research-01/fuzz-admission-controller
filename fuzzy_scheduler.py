@@ -6,6 +6,7 @@ import traceback
 from collections import Counter
 
 import requests
+import urllib3
 from kubernetes import client, config
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +30,8 @@ STATS_EVERY = int(os.getenv("FUZZY_STATS_EVERY", "6"))
 
 _STATS = Counter()
 
+if INSECURE:
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def _now():
     return time.strftime("%Y-%m-%d %H:%M:%S")
@@ -169,33 +172,29 @@ def _pending_pods(core):
     return pending
 
 
-def _bind_pod(core, pod, node_name):
+def _bind_pod_raw(core, pod, node_name):
     if not node_name:
-        print(f"[fuzzy-scheduler] skip bind, empty node name for {pod.metadata.namespace}/{pod.metadata.name}")
+        print(f"[fuzzy-scheduler] skip raw bind, empty node name for {pod.metadata.namespace}/{pod.metadata.name}")
         return False
-    target = client.V1ObjectReference(kind="Node", api_version="v1", name=node_name)
-    binding = client.V1Binding(
-        metadata=client.V1ObjectMeta(
-            name=pod.metadata.name,
-            namespace=pod.metadata.namespace,
-        ),
-        target=target,
+    body = {
+        "apiVersion": "v1",
+        "kind": "Binding",
+        "metadata": {"name": pod.metadata.name, "namespace": pod.metadata.namespace},
+        "target": {"apiVersion": "v1", "kind": "Node", "name": node_name},
+    }
+    path = f"/api/v1/namespaces/{pod.metadata.namespace}/pods/{pod.metadata.name}/binding"
+    _log("[fuzzy-scheduler] bind method=raw")
+    _timed(
+        "create_pod_binding_raw",
+        core.api_client.call_api,
+        path,
+        "POST",
+        body=body,
+        response_type="object",
+        auth_settings=["BearerToken"],
+        _preload_content=True,
+        _request_timeout=K8S_TIMEOUT,
     )
-    if hasattr(core, "create_namespaced_pod_binding"):
-        _timed(
-            "create_pod_binding",
-            core.create_namespaced_pod_binding,
-            pod.metadata.name,
-            pod.metadata.namespace,
-            binding,
-        )
-    else:
-        _timed(
-            "create_binding",
-            core.create_namespaced_binding,
-            pod.metadata.namespace,
-            binding,
-        )
     return True
 
 
@@ -221,17 +220,47 @@ def main():
         _log(f"[fuzzy-scheduler] loop={loop_i} pending_pods={len(pods)}")
 
         for pod in pods:
+            try:
+                fresh = _timed(
+                    "read_pod",
+                    core.read_namespaced_pod,
+                    pod.metadata.name,
+                    pod.metadata.namespace,
+                    _request_timeout=K8S_TIMEOUT,
+                )
+                if fresh.spec.node_name:
+                    _STATS["already_assigned"] += 1
+                    _log(
+                        f"[fuzzy-scheduler] skip; already assigned to "
+                        f"{fresh.spec.node_name} for {pod.metadata.namespace}/{pod.metadata.name}"
+                    )
+                    continue
+            except Exception as exc:
+                _STATS["read_pod_failed"] += 1
+                _log(f"[fuzzy-scheduler] read_pod failed: {exc}")
+
             node_name = _choose_node(core)
             if not node_name:
                 _log(f"[fuzzy-scheduler] no eligible node for {pod.metadata.namespace}/{pod.metadata.name}")
                 continue
             try:
-                if _bind_pod(core, pod, node_name):
+                _log(
+                    f"[fuzzy-scheduler] bind method=raw "
+                    f"{pod.metadata.namespace}/{pod.metadata.name} -> {node_name!r}"
+                )
+                if _bind_pod_raw(core, pod, node_name):
                     _STATS["bound_ok"] += 1
                     _log(f"[fuzzy-scheduler] bound {pod.metadata.namespace}/{pod.metadata.name} -> {node_name}")
-            except (client.exceptions.ApiException, ValueError) as exc:
-                _STATS["bind_failed"] += 1
-                _log(f"[fuzzy-scheduler] bind failed: {exc}")
+            except client.exceptions.ApiException as exc:
+                if getattr(exc, "status", None) == 409:
+                    _STATS["bind_conflict"] += 1
+                    _log(
+                        f"[fuzzy-scheduler] bind conflict (already assigned): "
+                        f"{pod.metadata.namespace}/{pod.metadata.name}"
+                    )
+                else:
+                    _STATS["bind_failed"] += 1
+                    _log(f"[fuzzy-scheduler] bind failed: {exc}")
 
         if loop_i % STATS_EVERY == 0:
             top = ", ".join([f"{k}={v}" for k, v in _STATS.most_common(10)])
