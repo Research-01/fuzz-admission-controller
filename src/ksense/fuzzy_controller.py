@@ -25,7 +25,7 @@ class FuzzyConfig:
     monitor_csv: str = os.getenv("FUZZY_MONITOR_CSV", "/tmp/ksense/fuzzy_monitor.csv")
     score_csv: str = os.getenv("FUZZY_SCORE_CSV", "/tmp/ksense/fuzzy_score.csv")
     rules_enabled: bool = os.getenv("FUZZY_RULES_ENABLED", "true").lower() == "true"
-    rules_interval_s: int = int(os.getenv("FUZZY_RULES_INTERVAL_S", "10"))
+    rules_interval_s: int = int(os.getenv("FUZZY_RULES_INTERVAL_S", "1"))
     rules_timeout_s: int = int(os.getenv("FUZZY_RULES_TIMEOUT_S", "5"))
     rules_usage_csv: str = os.getenv("FUZZY_RULES_CSV", "/tmp/ksense/rules.csv")
     rules_firing_csv: str = os.getenv("FUZZY_RULE_FIRING_CSV", "/tmp/ksense/rule_firing.csv")
@@ -340,52 +340,28 @@ class FuzzyController:
             timeout=cfg.rules_timeout_s,
         )
 
-    def _collect_metrics(self, include_system: bool = True):
+    def _collect_metrics(self):
         """
-        include_system=True  -> used by monitor_once (samples CPU/PSI deltas)
-        include_system=False -> used by evaluate (reads cached last_cpu/last_psi)
+        Uses cached CPU/PSI from the 1 Hz sampler.
         """
         cfg = self.cfg
         entries = _parse_recent_metrics(cfg)
-        now = datetime.now()
-        short_cutoff = now - timedelta(seconds=cfg.short_win_s)
-
-        fric_vals_short = []
-        eng_vals_short = []
-        fric_vals_long = []
-        eng_vals_long = []
+        fric = None
+        eng = None
         last_direction = None
 
-        for ts, fric, eng, direction in entries:
-            if fric is not None:
-                fric_vals_long.append(fric)
-                if ts >= short_cutoff:
-                    fric_vals_short.append(fric)
-            if eng is not None:
-                eng_vals_long.append(eng)
-                if ts >= short_cutoff:
-                    eng_vals_short.append(eng)
-            if direction is not None:
-                last_direction = direction
+        for _ts, fric_val, eng_val, direction in reversed(entries):
+            if fric_val is None or eng_val is None:
+                continue
+            fric = fric_val
+            eng = eng_val
+            last_direction = direction
+            break
 
-        fric_abs_long = [abs(v) for v in fric_vals_long]
-        fric_abs_short = [abs(v) for v in fric_vals_short]
-        fric_long_p99 = _percentile(fric_abs_long, 99) if fric_abs_long else None
-        eng_long_p99 = _percentile(eng_vals_long, 99) if eng_vals_long else None
-        fric_short_p99 = _percentile(fric_abs_short, 99) if fric_abs_short else None
-        eng_short_p99 = _percentile(eng_vals_short, 99) if eng_vals_short else None
-
-        fric_candidates = [v for v in [fric_short_p99, fric_long_p99] if v is not None]
-        eng_candidates = [v for v in [eng_short_p99, eng_long_p99] if v is not None]
-        fric = max(fric_candidates) if fric_candidates else None
-        eng = max(eng_candidates) if eng_candidates else None
         if fric is not None and last_direction is not None:
             fric = fric * last_direction
 
-        if include_system:
-            cpu, psi = self._sampler.sample_once()
-        else:
-            cpu, psi = self._sampler.cached()
+        cpu, psi = self._sampler.cached()
 
         return {
             "fric": fric,
@@ -393,10 +369,10 @@ class FuzzyController:
             "cpu": cpu,
             "psi": psi,
             "last_direction": last_direction,
-            "fric_short_p99": fric_short_p99,
-            "fric_long_p99": fric_long_p99,
-            "eng_short_p99": eng_short_p99,
-            "eng_long_p99": eng_long_p99,
+            "fric_short_p99": None,
+            "fric_long_p99": None,
+            "eng_short_p99": None,
+            "eng_long_p99": None,
         }
 
     def monitor_once(self):
@@ -405,7 +381,7 @@ class FuzzyController:
         Writes one row to monitor.csv each call.
         """
         cfg = self.cfg
-        metrics = self._collect_metrics(include_system=False)
+        metrics = self._collect_metrics()
         fric = metrics["fric"]
         eng = metrics["eng"]
         cpu = metrics["cpu"]
@@ -564,7 +540,7 @@ class FuzzyController:
           - Writes score.csv only.
         """
         cfg = self.cfg
-        metrics = self._collect_metrics(include_system=False)
+        metrics = self._collect_metrics()
 
         fric = metrics["fric"]
         eng = metrics["eng"]
