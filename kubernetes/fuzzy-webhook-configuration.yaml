@@ -6,15 +6,16 @@ webhooks:
   - name: ksense-fuzzy-webhook.ksense.svc
     admissionReviewVersions: ["v1"]
     sideEffects: None
-    failurePolicy: Fail
+    failurePolicy: Ignore
     matchPolicy: Equivalent
     namespaceSelector:
       matchExpressions:
         - key: kubernetes.io/metadata.name
-          operator: NotIn
+          operator: In
           values:
-            - kube-system
-            - ksense
+            - sn
+            - sa
+            - hotel
     rules:
       - apiGroups: [""]
         apiVersions: ["v1"]
