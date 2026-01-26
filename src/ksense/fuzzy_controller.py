@@ -1,5 +1,7 @@
 import math
 import os
+import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -22,6 +24,11 @@ class FuzzyConfig:
     allow_on_missing: bool = os.getenv("FUZZY_ALLOW_ON_MISSING", "false").lower() == "true"
     monitor_csv: str = os.getenv("FUZZY_MONITOR_CSV", "/tmp/ksense/fuzzy_monitor.csv")
     score_csv: str = os.getenv("FUZZY_SCORE_CSV", "/tmp/ksense/fuzzy_score.csv")
+    rules_enabled: bool = os.getenv("FUZZY_RULES_ENABLED", "true").lower() == "true"
+    rules_interval_s: int = int(os.getenv("FUZZY_RULES_INTERVAL_S", "10"))
+    rules_timeout_s: int = int(os.getenv("FUZZY_RULES_TIMEOUT_S", "5"))
+    rules_usage_csv: str = os.getenv("FUZZY_RULES_CSV", "/tmp/ksense/rules.csv")
+    rules_firing_csv: str = os.getenv("FUZZY_RULE_FIRING_CSV", "/tmp/ksense/rule_firing.csv")
 
 
 def _percentile(values, p):
@@ -240,6 +247,8 @@ class FuzzyController:
 
         self._monitor_thread = None
         self._monitor_stop = threading.Event()
+        self._rules_thread = None
+        self._rules_stop = threading.Event()
 
         ensure_csv(self.cfg.monitor_csv, ["Time", "FrictionSigned", "Energy", "CPUUtil", "PSI", "Score"])
         ensure_csv(self.cfg.score_csv, ["Time", "FrictionSigned", "Energy", "CPUUtil", "PSI", "Score"])
@@ -252,6 +261,18 @@ class FuzzyController:
             target=self._monitor_loop, args=(interval_s,), daemon=True
         )
         self._monitor_thread.start()
+        if self.cfg.rules_enabled:
+            self.start_rules_generation()
+
+    def start_rules_generation(self, interval_s: Optional[float] = None):
+        if self._rules_thread and self._rules_thread.is_alive():
+            return
+        self._rules_stop.clear()
+        interval = interval_s if interval_s is not None else float(self.cfg.rules_interval_s)
+        self._rules_thread = threading.Thread(
+            target=self._rules_loop, args=(interval,), daemon=True
+        )
+        self._rules_thread.start()
 
     def _monitor_loop(self, interval_s: float):
         """
@@ -272,6 +293,52 @@ class FuzzyController:
 
     def stop_monitoring(self):
         self._monitor_stop.set()
+        self.stop_rules_generation()
+
+    def stop_rules_generation(self):
+        self._rules_stop.set()
+
+    def _rules_loop(self, interval_s: float):
+        next_t = time.monotonic()
+        while not self._rules_stop.is_set():
+            next_t += interval_s
+            try:
+                self._run_rules_generation()
+            except Exception:
+                pass
+            sleep_s = next_t - time.monotonic()
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+
+    def _run_rules_generation(self):
+        cfg = self.cfg
+        if not os.path.exists(cfg.monitor_csv):
+            return
+        if os.path.getsize(cfg.monitor_csv) <= 0:
+            return
+
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        script_path = os.path.join(repo_root, "scripts", "wang_mendel_rules.py")
+        if not os.path.exists(script_path):
+            return
+
+        cmd = [
+            sys.executable,
+            script_path,
+            "--input",
+            cfg.monitor_csv,
+            "--usage",
+            cfg.rules_usage_csv,
+            "--firing",
+            cfg.rules_firing_csv,
+        ]
+        subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=cfg.rules_timeout_s,
+        )
 
     def _collect_metrics(self, include_system: bool = True):
         """
