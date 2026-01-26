@@ -8,6 +8,7 @@ from typing import Optional
 
 from .helpers import ensure_csv
 
+
 @dataclass
 class FuzzyConfig:
     csv_path: str = os.getenv("KSENSE_METRICS_CSV", "/tmp/ksense/kernel_metrics.csv")
@@ -21,7 +22,6 @@ class FuzzyConfig:
     allow_on_missing: bool = os.getenv("FUZZY_ALLOW_ON_MISSING", "false").lower() == "true"
     monitor_csv: str = os.getenv("FUZZY_MONITOR_CSV", "/tmp/ksense/fuzzy_monitor.csv")
     score_csv: str = os.getenv("FUZZY_SCORE_CSV", "/tmp/ksense/fuzzy_score.csv")
-
 
 
 def _percentile(values, p):
@@ -44,14 +44,15 @@ def _trimf(x, params):
 
 
 def _trapmf(x, params):
+    # Inclusive endpoints; fixes CPU=100 / PSI=100 membership edge case
     a, b, c, d = params
-    if x <= a or x >= d:
+    if x < a or x > d:
         return 0.0
     if b <= x <= c:
         return 1.0
-    if x < b:
-        return (x - a) / (b - a) if b != a else 0.0
-    return (d - x) / (d - c) if d != c else 0.0
+    if a <= x < b:
+        return (x - a) / (b - a) if b != a else 1.0
+    return (d - x) / (d - c) if d != c else 1.0
 
 
 def _gaussmf(x, mean, sigma):
@@ -96,7 +97,7 @@ def _parse_recent_metrics(cfg: FuzzyConfig):
     start_idx = 1 if lines and lines[0] == header_line else 0
     for line in lines[start_idx:]:
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) <= max(time_idx, fric_idx, eng_idx):
+        if len(parts) <= max(time_idx, fric_idx, eng_idx, dir_idx):
             continue
         ts = parts[time_idx]
         try:
@@ -125,9 +126,19 @@ def _parse_recent_metrics(cfg: FuzzyConfig):
 
 
 class ResourceSampler:
+    """
+    CPU and PSI are intended to be sampled at 1 Hz by the monitor thread.
+    Admission/evaluate path reads cached last_cpu/last_psi and does NOT
+    call cpu_util()/psi() to avoid disturbing deltas.
+    """
     def __init__(self):
+        self._lock = threading.Lock()
         self._prev_total = None
         self._prev_idle = None
+        self._psi_prev = {}
+
+        self.last_cpu: Optional[float] = None  # 0..100
+        self.last_psi: Optional[float] = None  # 0..100
 
     def cpu_util(self):
         try:
@@ -151,29 +162,16 @@ class ResourceSampler:
         self._prev_idle = idle
         if total_delta <= 0:
             return None
-        return max(0.0, min(1.0, 1.0 - (idle_delta / total_delta)))
-
-    def mem_util(self):
-        try:
-            with open("/proc/meminfo", "r", encoding="utf-8") as f:
-                data = f.read().splitlines()
-        except FileNotFoundError:
-            return None
-        mem_total = None
-        mem_avail = None
-        for line in data:
-            if line.startswith("MemTotal:"):
-                mem_total = float(line.split()[1])
-            elif line.startswith("MemAvailable:"):
-                mem_avail = float(line.split()[1])
-        if not mem_total or mem_avail is None:
-            return None
-        used = max(0.0, mem_total - mem_avail)
-        return max(0.0, min(1.0, used / mem_total))
+        util = 1.0 - (idle_delta / total_delta)
+        return max(0.0, min(100.0, util * 100.0))
 
     def psi(self):
         psi_vals = []
+        # monotonic clock is correct for interval computations
+        now = time.monotonic()
+
         for path in ("/proc/pressure/cpu", "/proc/pressure/memory", "/proc/pressure/io"):
+            total_us = None
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     lines = f.read().splitlines()
@@ -182,18 +180,52 @@ class ResourceSampler:
             for line in lines:
                 if line.startswith("some"):
                     for part in line.split():
-                        if part.startswith("avg10="):
+                        if part.startswith("total="):
                             try:
-                                psi_vals.append(float(part.split("=")[1]))
+                                total_us = float(part.split("=")[1])
                             except ValueError:
-                                pass
+                                total_us = None
+            if total_us is None:
+                continue
+
+            prev = self._psi_prev.get(path)
+            self._psi_prev[path] = (total_us, now)
+            if not prev:
+                continue
+
+            prev_total, prev_ts = prev
+            dt = now - prev_ts
+            if dt <= 0:
+                continue
+            delta_us = total_us - prev_total
+            if delta_us < 0:
+                continue
+
+            # % of time stalled over the interval
+            psi_pct = (delta_us / 1_000_000.0) / dt * 100.0
+            psi_vals.append(psi_pct)
+
         if not psi_vals:
             return None
         psi = max(psi_vals)
-        # Kernel PSI avg is expressed as a percentage. Normalize to 0-1 if needed.
-        if psi > 1.0:
-            psi = psi / 100.0
-        return psi
+        return max(0.0, min(100.0, psi))
+
+    def sample_once(self):
+        """
+        Called by the 1 Hz monitor loop. Updates cached CPU/PSI.
+        """
+        with self._lock:
+            cpu = self.cpu_util()
+            psi = self.psi()
+            if cpu is not None:
+                self.last_cpu = cpu
+            if psi is not None:
+                self.last_psi = psi
+            return self.last_cpu, self.last_psi
+
+    def cached(self):
+        with self._lock:
+            return self.last_cpu, self.last_psi
 
 
 class FuzzyController:
@@ -203,18 +235,146 @@ class FuzzyController:
         self._bad = 0
         self._good = 0
         self._last_decision = "allow"
+
         self._sampler = ResourceSampler()
-        self._last_monitor_ts = 0.0
+
+        self._monitor_thread = None
+        self._monitor_stop = threading.Event()
+
         ensure_csv(self.cfg.monitor_csv, ["Time", "FrictionSigned", "Energy", "CPUUtil", "PSI", "Score"])
         ensure_csv(self.cfg.score_csv, ["Time", "FrictionSigned", "Energy", "CPUUtil", "PSI", "Score"])
+
+    def start_monitoring(self, interval_s: float = 1.0):
+        if self._monitor_thread and self._monitor_thread.is_alive():
+            return
+        self._monitor_stop.clear()
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_loop, args=(interval_s,), daemon=True
+        )
+        self._monitor_thread.start()
+
+    def _monitor_loop(self, interval_s: float):
+        """
+        Writes EXACTLY one monitor.csv row per interval (1s).
+        Uses monotonic scheduling to avoid drift.
+        """
+        next_t = time.monotonic()
+        while not self._monitor_stop.is_set():
+            next_t += interval_s
+            try:
+                self._sampler.sample_once()
+                self.monitor_once()
+            except Exception:
+                pass
+            sleep_s = next_t - time.monotonic()
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+
+    def stop_monitoring(self):
+        self._monitor_stop.set()
+
+    def _collect_metrics(self, include_system: bool = True):
+        """
+        include_system=True  -> used by monitor_once (samples CPU/PSI deltas)
+        include_system=False -> used by evaluate (reads cached last_cpu/last_psi)
+        """
+        cfg = self.cfg
+        entries = _parse_recent_metrics(cfg)
+        now = datetime.now()
+        short_cutoff = now - timedelta(seconds=cfg.short_win_s)
+
+        fric_vals_short = []
+        eng_vals_short = []
+        fric_vals_long = []
+        eng_vals_long = []
+        last_direction = None
+
+        for ts, fric, eng, direction in entries:
+            if fric is not None:
+                fric_vals_long.append(fric)
+                if ts >= short_cutoff:
+                    fric_vals_short.append(fric)
+            if eng is not None:
+                eng_vals_long.append(eng)
+                if ts >= short_cutoff:
+                    eng_vals_short.append(eng)
+            if direction is not None:
+                last_direction = direction
+
+        fric_abs_long = [abs(v) for v in fric_vals_long]
+        fric_abs_short = [abs(v) for v in fric_vals_short]
+        fric_long_p99 = _percentile(fric_abs_long, 99) if fric_abs_long else None
+        eng_long_p99 = _percentile(eng_vals_long, 99) if eng_vals_long else None
+        fric_short_p99 = _percentile(fric_abs_short, 99) if fric_abs_short else None
+        eng_short_p99 = _percentile(eng_vals_short, 99) if eng_vals_short else None
+
+        fric_candidates = [v for v in [fric_short_p99, fric_long_p99] if v is not None]
+        eng_candidates = [v for v in [eng_short_p99, eng_long_p99] if v is not None]
+        fric = max(fric_candidates) if fric_candidates else None
+        eng = max(eng_candidates) if eng_candidates else None
+        if fric is not None and last_direction is not None:
+            fric = fric * last_direction
+
+        if include_system:
+            cpu, psi = self._sampler.sample_once()
+        else:
+            cpu, psi = self._sampler.cached()
+
+        return {
+            "fric": fric,
+            "eng": eng,
+            "cpu": cpu,
+            "psi": psi,
+            "last_direction": last_direction,
+            "fric_short_p99": fric_short_p99,
+            "fric_long_p99": fric_long_p99,
+            "eng_short_p99": eng_short_p99,
+            "eng_long_p99": eng_long_p99,
+        }
+
+    def monitor_once(self):
+        """
+        Called only by the 1 Hz monitor thread.
+        Writes one row to monitor.csv each call.
+        """
+        cfg = self.cfg
+        metrics = self._collect_metrics(include_system=False)
+        fric = metrics["fric"]
+        eng = metrics["eng"]
+        cpu = metrics["cpu"]
+        psi = metrics["psi"]
+        last_direction = metrics["last_direction"]
+
+        missing = [name for name, val in [("friction", fric), ("energy", eng), ("cpu", cpu), ("psi", psi)] if val is None]
+        critical_missing = [name for name in missing if name in ("friction", "energy")]
+
+        if critical_missing and not cfg.allow_on_missing:
+            # still log the monitor row; score=1.0 to represent "high severity"
+            fric_signed = (fric or 0.0) * (last_direction or 1.0)
+            self._write_monitor_sample(
+                fric_signed,
+                eng or 0.0,
+                cpu or 0.0,
+                psi or 0.0,
+                1.0,
+            )
+            return
+
+        fric_val = fric or 0.0
+        eng_val = eng or 0.0
+        cpu_val = cpu or 0.0
+        psi_val = psi or 0.0
+        score, _level, _scaled = self._fuzzy_score(fric_val, eng_val, cpu_val, psi_val)
+
+        self._write_monitor_sample(fric_val, eng_val, cpu_val, psi_val, score)
 
     def _fuzzy_score(self, fric, eng, cpu, psi):
         # Fixed input axes:
         # CPU: 0-100, PSI: 0-100, Friction: -300..300, Energy: 0..300
-        cpu_pct = max(0.0, min(100.0, cpu * 100.0))
-        psi_pct = max(0.0, min(100.0, psi * 100.0))
-        fric_val = max(-300.0, min(300.0, fric))
-        eng_val = max(0.0, min(300.0, eng))
+        cpu_pct = max(0.0, min(100.0, float(cpu)))
+        psi_pct = max(0.0, min(100.0, float(psi)))
+        fric_val = max(-300.0, min(300.0, float(fric)))
+        eng_val = max(0.0, min(300.0, float(eng)))
 
         # CPU membership
         cpu_normal = _trapmf(cpu_pct, [0, 0, 60, 80])
@@ -329,56 +489,29 @@ class FuzzyController:
         }
 
     def evaluate(self):
+        """
+        Admission-time evaluation.
+        IMPORTANT:
+          - Reads cached CPU/PSI (1-second cadence).
+          - Does NOT write monitor.csv.
+          - Writes score.csv only.
+        """
         cfg = self.cfg
-        entries = _parse_recent_metrics(cfg)
-        now = datetime.now()
-        short_cutoff = now - timedelta(seconds=cfg.short_win_s)
+        metrics = self._collect_metrics(include_system=False)
 
-        fric_vals_short = []
-        eng_vals_short = []
-        fric_vals_long = []
-        eng_vals_long = []
-        last_direction = None
-
-        for ts, fric, eng, direction in entries:
-            if fric is not None:
-                fric_vals_long.append(fric)
-                if ts >= short_cutoff:
-                    fric_vals_short.append(fric)
-            if eng is not None:
-                eng_vals_long.append(eng)
-                if ts >= short_cutoff:
-                    eng_vals_short.append(eng)
-            if direction is not None:
-                last_direction = direction
-
-        fric_abs_long = [abs(v) for v in fric_vals_long]
-        fric_abs_short = [abs(v) for v in fric_vals_short]
-        fric_long_p99 = _percentile(fric_abs_long, 99) if fric_abs_long else None
-        eng_long_p99 = _percentile(eng_vals_long, 99) if eng_vals_long else None
-        fric_short_p99 = _percentile(fric_abs_short, 99) if fric_abs_short else None
-        eng_short_p99 = _percentile(eng_vals_short, 99) if eng_vals_short else None
-
-        fric_candidates = [v for v in [fric_short_p99, fric_long_p99] if v is not None]
-        eng_candidates = [v for v in [eng_short_p99, eng_long_p99] if v is not None]
-        fric = max(fric_candidates) if fric_candidates else None
-        eng = max(eng_candidates) if eng_candidates else None
-        if fric is not None and last_direction is not None:
-            fric = fric * last_direction
-
-        cpu = self._sampler.cpu_util()
-        psi = self._sampler.psi()
+        fric = metrics["fric"]
+        eng = metrics["eng"]
+        cpu = metrics["cpu"]
+        psi = metrics["psi"]
+        last_direction = metrics["last_direction"]
+        fric_short_p99 = metrics["fric_short_p99"]
+        fric_long_p99 = metrics["fric_long_p99"]
+        eng_short_p99 = metrics["eng_short_p99"]
+        eng_long_p99 = metrics["eng_long_p99"]
 
         missing = [name for name, val in [("friction", fric), ("energy", eng), ("cpu", cpu), ("psi", psi)] if val is None]
         critical_missing = [name for name in missing if name in ("friction", "energy")]
         if critical_missing and not cfg.allow_on_missing:
-            self._write_monitor_sample(
-                (fric or 0.0) * (last_direction or 1.0),
-                eng or 0.0,
-                cpu or 0.0,
-                psi or 0.0,
-                1.0,
-            )
             self._write_score_sample(
                 (fric or 0.0) * (last_direction or 1.0),
                 eng or 0.0,
@@ -413,7 +546,7 @@ class FuzzyController:
                 "energy_p99_short": eng_short_p99,
                 "energy_p99_long": eng_long_p99,
                 "cpu_util": cpu,
-                "psi_avg10": psi,
+                "psi_1s": psi,
                 "cpu_pct": scaled["cpu_pct"],
                 "psi_pct": scaled["psi_pct"],
                 "friction_scaled": scaled["friction_scaled"],
@@ -421,15 +554,13 @@ class FuzzyController:
             },
             "missing": missing,
         }
-        self._write_monitor_sample(fric_val, eng_val, cpu_val, psi_val, score)
+
+        # score.csv updates only on evaluate/decide
         self._write_score_sample(fric_val, eng_val, cpu_val, psi_val, score)
         return report
 
     def _write_monitor_sample(self, friction_signed, energy, cpu, psi, score):
-        now = time.time()
-        if now - self._last_monitor_ts < 1.0:
-            return
-        self._last_monitor_ts = now
+        # monitor loop already enforces 1 Hz cadence; do not throttle here
         ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(self.cfg.monitor_csv, "a", newline="") as f:
             f.write(f"{ts_str},{friction_signed:.6f},{energy:.6f},{cpu:.6f},{psi:.6f},{score:.3f}\n")
@@ -442,6 +573,7 @@ class FuzzyController:
     def decide(self):
         with self._lock:
             report = self.evaluate()
+
             if report["decision"] == "deny":
                 self._bad += 1
                 self._good = 0

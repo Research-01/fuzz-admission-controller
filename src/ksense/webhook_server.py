@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import json
 import ssl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -31,26 +32,30 @@ class WebhookHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         content_len = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(content_len) if content_len > 0 else b"{}"
+
         if self.path.startswith("/validate"):
             try:
                 review = json.loads(body.decode("utf-8"))
             except json.JSONDecodeError:
                 _json_response(self, 400, {"error": "invalid json"})
                 return
+
             report = self.server.controller.decide()
+
             uid = review.get("request", {}).get("uid", "")
             allowed = report["decision"] == "allow"
+
             msg = f"decision={report['decision']} score={report['score']:.3f} level={report['level']}"
             if report.get("reason"):
                 msg = f"{msg} reason={report['reason']}"
-            status = {"message": msg}
+
             response = {
                 "apiVersion": review.get("apiVersion", "admission.k8s.io/v1"),
                 "kind": "AdmissionReview",
                 "response": {
                     "uid": uid,
                     "allowed": allowed,
-                    "status": status,
+                    "status": {"message": msg},
                     "auditAnnotations": {
                         "fuzzy.score": f"{report['score']:.3f}",
                         "fuzzy.level": report["level"],
@@ -58,14 +63,18 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     },
                 },
             }
+
             if report.get("missing"):
                 response["response"]["auditAnnotations"]["fuzzy.missing"] = ",".join(report["missing"])
+
             _json_response(self, 200, response)
             return
+
         if self.path.startswith("/score"):
             report = self.server.controller.decide()
             _json_response(self, 200, report)
             return
+
         _json_response(self, 404, {"error": "not found"})
 
     def log_message(self, format, *args):
@@ -74,8 +83,13 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
 def run_server(host="0.0.0.0", port=8443, tls_cert=None, tls_key=None):
     controller = FuzzyController()
+
+    # Important: this produces monitor.csv rows at 1 Hz and keeps CPU/PSI cached as true 1-second metrics.
+    controller.start_monitoring(1.0)
+
     httpd = ThreadingHTTPServer((host, port), WebhookHandler)
     httpd.controller = controller
+
     if tls_cert and tls_key:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(tls_cert, tls_key)
@@ -83,5 +97,6 @@ def run_server(host="0.0.0.0", port=8443, tls_cert=None, tls_key=None):
         proto = "https"
     else:
         proto = "http"
+
     print(f"[fuzzy-webhook] listening on {proto}://{host}:{port}")
     httpd.serve_forever()
