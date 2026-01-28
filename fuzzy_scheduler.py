@@ -166,7 +166,10 @@ def main():
             if not node_name:
                 print(f"[fuzzy-scheduler] No suitable node for {pod.metadata.name} (all denied)")
                 continue
-            # Bind pod
+            # Bind pod (with defensive check)
+            if node_name is None:
+                print(f"[fuzzy-scheduler] ✗ ERROR: node_name is None for {pod.metadata.name} - skipping")
+                continue
             try:
                 _bind_pod(core, pod, node_name)
                 placements_this_cycle += 1
@@ -178,6 +181,8 @@ def main():
                     time.sleep(DELAY_BETWEEN_PLACEMENTS_S)
             except client.exceptions.ApiException as exc:
                 print(f"[fuzzy-scheduler] ✗ Bind failed for {pod.metadata.name}: {exc}")
+            except Exception as exc:
+                print(f"[fuzzy-scheduler] ✗ Unexpected error for {pod.metadata.name}: {exc}")
         # Summary
         cycle_duration = time.time() - cycle_start
         print(f"[fuzzy-scheduler] Cycle complete: {placements_this_cycle} placement(s) in {cycle_duration:.1f}s")
