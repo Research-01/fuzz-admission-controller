@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
+"""
+Improved Fuzzy Scheduler with Rate Limiting
+ 
+FIXES:
+1. Re-queries score after EACH pod placement
+2. Configurable rate limit (max pods per interval)
+3. Delay between placements to let system stabilize
+4. Better logging for debugging
+ 
+This prevents overwhelming the system by scheduling all pods at once.
+"""
+ 
 import os
 import sys
 import time
-import traceback
-from collections import Counter
-
+ 
 import requests
-import urllib3
 from kubernetes import client, config
-
+ 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(ROOT, "src")
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
-
-
+ 
+ 
 SCHEDULER_NAME = os.getenv("FUZZY_SCHEDULER_NAME", "fuzzy-scheduler")
 WEBHOOK_SERVICE = os.getenv("FUZZY_WEBHOOK_SERVICE", "ksense-fuzzy-webhook")
 WEBHOOK_NAMESPACE = os.getenv("FUZZY_WEBHOOK_NAMESPACE", "ksense")
@@ -22,50 +31,21 @@ WEBHOOK_PORT = int(os.getenv("FUZZY_WEBHOOK_PORT", "8443"))
 WEBHOOK_SCHEME = os.getenv("FUZZY_WEBHOOK_SCHEME", "https")
 INSECURE = os.getenv("FUZZY_INSECURE_TLS", "true").lower() == "true"
 POLL_INTERVAL = float(os.getenv("FUZZY_SCHEDULER_POLL_S", "10"))
-K8S_TIMEOUT = float(os.getenv("FUZZY_K8S_TIMEOUT_S", "5.0"))
-LOOP_LOG_EVERY = int(os.getenv("FUZZY_LOOP_LOG_EVERY", "1"))
-SLOW_LOOP_S = float(os.getenv("FUZZY_SLOW_LOOP_S", "2.0"))
-SLOW_CALL_S = float(os.getenv("FUZZY_SLOW_CALL_S", "0.5"))
-STATS_EVERY = int(os.getenv("FUZZY_STATS_EVERY", "6"))
-
-_STATS = Counter()
-
-if INSECURE:
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-def _now():
-    return time.strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _log(msg):
-    print(f"[{_now()}] {msg}", flush=True)
-
-
-def _timed(label, fn, *args, **kwargs):
-    t0 = time.time()
-    try:
-        return fn(*args, **kwargs)
-    finally:
-        dt = time.time() - t0
-        if dt > SLOW_CALL_S:
-            _log(f"[fuzzy-scheduler] SLOW_CALL {label} elapsed={dt:.3f}s")
-
-
+ 
+# Rate limiting settings
+MAX_PLACEMENTS_PER_CYCLE = int(os.getenv("FUZZY_SCHEDULER_MAX_PER_CYCLE", "1"))
+DELAY_BETWEEN_PLACEMENTS_S = float(os.getenv("FUZZY_SCHEDULER_PLACEMENT_DELAY_S", "5"))
+ 
+ 
 def _load_kube():
     try:
         config.load_incluster_config()
     except config.config_exception.ConfigException:
         config.load_kube_config()
-
-
+ 
+ 
 def _list_webhook_endpoints(core):
-    ep = _timed(
-        "read_endpoints",
-        core.read_namespaced_endpoints,
-        WEBHOOK_SERVICE,
-        WEBHOOK_NAMESPACE,
-        _request_timeout=K8S_TIMEOUT,
-    )
+    ep = core.read_namespaced_endpoints(WEBHOOK_SERVICE, WEBHOOK_NAMESPACE)
     addrs = []
     for subset in ep.subsets or []:
         port = WEBHOOK_PORT
@@ -76,203 +56,137 @@ def _list_webhook_endpoints(core):
                     break
         for addr in subset.addresses or []:
             addrs.append((addr.ip, port))
-    if not addrs:
-        _STATS["no_endpoints"] += 1
     return addrs
-
-
+ 
+ 
 def _score_endpoint(ip, port):
     url = f"{WEBHOOK_SCHEME}://{ip}:{port}/score"
     try:
-        resp = _timed(
-            "score_endpoint",
-            requests.get,
-            url,
-            timeout=1.5,
-            verify=not INSECURE,
-        )
+        resp = requests.get(url, timeout=1.5, verify=not INSECURE)
         resp.raise_for_status()
         return resp.json()
     except requests.RequestException:
-        _STATS["endpoint_unreachable"] += 1
         return None
-
-
-def _node_from_endpoint_ip(core, ip):
-    pods = _timed(
-        "list_pods_by_ip",
-        core.list_pod_for_all_namespaces,
-        field_selector=f"status.podIP={ip}",
-        _request_timeout=K8S_TIMEOUT,
-    ).items
-    if pods and pods[0].spec.node_name:
-        return pods[0].spec.node_name
-    return None
-
-
+ 
+ 
 def _choose_node(core):
+    """
+    Choose best node based on current fuzzy scores.
+    Returns: (node_name, score, report) or (None, None, None)
+    """
     endpoints = _list_webhook_endpoints(core)
     best = None
+    all_reports = []
     for ip, port in endpoints:
         report = _score_endpoint(ip, port)
         if not report:
             continue
+        all_reports.append((ip, port, report))
         if report.get("decision") == "deny":
-            _STATS["decision_deny"] += 1
             continue
         score = report.get("score")
         if score is None:
-            _STATS["score_missing"] += 1
             continue
         if best is None or score < best["score"]:
-            best = {"ip": ip, "port": port, "score": score}
+            best = {"ip": ip, "port": port, "score": score, "report": report}
     if not best:
-        _STATS["no_eligible_node"] += 1
-        return None
-    # Map endpoint IP to node via EndpointAddress.node_name if available
-    ep = _timed(
-        "read_endpoints_map",
-        core.read_namespaced_endpoints,
-        WEBHOOK_SERVICE,
-        WEBHOOK_NAMESPACE,
-        _request_timeout=K8S_TIMEOUT,
-    )
+        # Log why all nodes denied
+        reasons = []
+        for ip, port, report in all_reports:
+            score = report.get("score", "N/A")
+            decision = report.get("decision", "unknown")
+            reasons.append(f"{ip}:score={score},decision={decision}")
+        print(f"[fuzzy-scheduler] All nodes denied: {'; '.join(reasons)}")
+        return None, None, None
+    # Map endpoint IP to node
+    ep = core.read_namespaced_endpoints(WEBHOOK_SERVICE, WEBHOOK_NAMESPACE)
     for subset in ep.subsets or []:
         for addr in subset.addresses or []:
             if addr.ip == best["ip"] and addr.node_name:
-                return addr.node_name
-    # Fallback: resolve endpoint IP -> pod -> node
-    node_from_ip = _node_from_endpoint_ip(core, best["ip"])
-    if node_from_ip:
-        return node_from_ip
-    # Fallback: if only one node, use it
-    nodes = _timed("list_nodes", core.list_node, _request_timeout=K8S_TIMEOUT).items
+                return addr.node_name, best["score"], best["report"]
+    # Fallback
+    nodes = core.list_node().items
     if len(nodes) == 1:
-        return nodes[0].metadata.name
-    _STATS["node_map_failed"] += 1
-    return None
-
-
+        return nodes[0].metadata.name, best["score"], best["report"]
+    return None, None, None
+ 
+ 
 def _pending_pods(core):
-    pods = _timed(
-        "list_pods_pending",
-        core.list_pod_for_all_namespaces,
-        field_selector="status.phase=Pending",
-        _request_timeout=K8S_TIMEOUT,
-    ).items
+    pods = core.list_pod_for_all_namespaces().items
     pending = []
     for pod in pods:
-        if pod.metadata.deletion_timestamp:
-            continue
         if pod.spec.scheduler_name != SCHEDULER_NAME:
             continue
         if pod.spec.node_name:
             continue
+        if pod.status.phase != "Pending":
+            continue
         pending.append(pod)
     return pending
-
-
-def _bind_pod_raw(core, pod, node_name):
-    if not node_name:
-        print(f"[fuzzy-scheduler] skip raw bind, empty node name for {pod.metadata.namespace}/{pod.metadata.name}")
-        return False
-    body = {
-        "apiVersion": "v1",
-        "kind": "Binding",
-        "metadata": {"name": pod.metadata.name, "namespace": pod.metadata.namespace},
-        "target": {"apiVersion": "v1", "kind": "Node", "name": node_name},
-    }
-    path = f"/api/v1/namespaces/{pod.metadata.namespace}/pods/{pod.metadata.name}/binding"
-    _log("[fuzzy-scheduler] bind method=raw")
-    _timed(
-        "create_pod_binding_raw",
-        core.api_client.call_api,
-        path,
-        "POST",
-        body=body,
-        response_type="object",
-        auth_settings=["BearerToken"],
-        _preload_content=True,
-        _request_timeout=K8S_TIMEOUT,
-    )
-    return True
-
-
+ 
+ 
+def _bind_pod(core, pod, node_name):
+    target = client.V1ObjectReference(kind="Node", api_version="v1", name=node_name)
+    meta = client.V1ObjectMeta(name=pod.metadata.name)
+    binding = client.V1Binding(target=target, metadata=meta)
+    core.create_namespaced_binding(pod.metadata.namespace, binding)
+ 
+ 
 def main():
     _load_kube()
     core = client.CoreV1Api()
-    _log(f"[fuzzy-scheduler] running as {SCHEDULER_NAME}")
-    loop_i = 0
+    print("=" * 80)
+    print(f"[fuzzy-scheduler] IMPROVED SCHEDULER with Rate Limiting")
+    print("=" * 80)
+    print(f"Scheduler name: {SCHEDULER_NAME}")
+    print(f"Poll interval: {POLL_INTERVAL}s")
+    print(f"Max placements per cycle: {MAX_PLACEMENTS_PER_CYCLE}")
+    print(f"Delay between placements: {DELAY_BETWEEN_PLACEMENTS_S}s")
+    print("=" * 80)
+    print()
     while True:
-        loop_i += 1
-        loop_start = time.time()
-        if loop_i % LOOP_LOG_EVERY == 0:
-            _log(f"[fuzzy-scheduler] loop={loop_i} tick start poll_interval={POLL_INTERVAL}")
-        try:
-            pods = _pending_pods(core)
-        except Exception as exc:
-            _log(f"[fuzzy-scheduler] loop={loop_i} pending_pods ERROR: {type(exc).__name__}: {exc}")
-            _log(traceback.format_exc())
+        cycle_start = time.time()
+        pods = _pending_pods(core)
+        if not pods:
+            print(f"[fuzzy-scheduler] No pending pods (sleeping {POLL_INTERVAL}s)")
             time.sleep(POLL_INTERVAL)
             continue
-
-        _STATS["pods_seen"] += len(pods)
-        _log(f"[fuzzy-scheduler] loop={loop_i} pending_pods={len(pods)}")
-
+        print(f"[fuzzy-scheduler] Found {len(pods)} pending pod(s)")
+        placements_this_cycle = 0
         for pod in pods:
-            try:
-                fresh = _timed(
-                    "read_pod",
-                    core.read_namespaced_pod,
-                    pod.metadata.name,
-                    pod.metadata.namespace,
-                    _request_timeout=K8S_TIMEOUT,
-                )
-                if fresh.spec.node_name:
-                    _STATS["already_assigned"] += 1
-                    _log(
-                        f"[fuzzy-scheduler] skip; already assigned to "
-                        f"{fresh.spec.node_name} for {pod.metadata.namespace}/{pod.metadata.name}"
-                    )
-                    continue
-            except Exception as exc:
-                _STATS["read_pod_failed"] += 1
-                _log(f"[fuzzy-scheduler] read_pod failed: {exc}")
-
-            node_name = _choose_node(core)
+            # Rate limit: stop after max placements
+            if placements_this_cycle >= MAX_PLACEMENTS_PER_CYCLE:
+                remaining = len(pods) - pods.index(pod)
+                print(f"[fuzzy-scheduler] Rate limit reached ({MAX_PLACEMENTS_PER_CYCLE} placements/cycle)")
+                print(f"[fuzzy-scheduler] {remaining} pod(s) will be tried next cycle")
+                break
+            # IMPORTANT: Re-query score for EACH pod
+            print(f"[fuzzy-scheduler] Querying nodes for {pod.metadata.namespace}/{pod.metadata.name}")
+            node_name, score, report = _choose_node(core)
             if not node_name:
-                _log(f"[fuzzy-scheduler] no eligible node for {pod.metadata.namespace}/{pod.metadata.name}")
+                print(f"[fuzzy-scheduler] No suitable node for {pod.metadata.name} (all denied)")
                 continue
+            # Bind pod
             try:
-                _log(
-                    f"[fuzzy-scheduler] bind method=raw "
-                    f"{pod.metadata.namespace}/{pod.metadata.name} -> {node_name!r}"
-                )
-                if _bind_pod_raw(core, pod, node_name):
-                    _STATS["bound_ok"] += 1
-                    _log(f"[fuzzy-scheduler] bound {pod.metadata.namespace}/{pod.metadata.name} -> {node_name}")
+                _bind_pod(core, pod, node_name)
+                placements_this_cycle += 1
+                print(f"[fuzzy-scheduler] ✓ Bound {pod.metadata.namespace}/{pod.metadata.name} -> {node_name}")
+                print(f"[fuzzy-scheduler]   Score: {score:.2f}, Level: {report.get('level', 'N/A')}")
+                # Delay before next placement (let system stabilize)
+                if placements_this_cycle < MAX_PLACEMENTS_PER_CYCLE and pods.index(pod) < len(pods) - 1:
+                    print(f"[fuzzy-scheduler]   Waiting {DELAY_BETWEEN_PLACEMENTS_S}s for system to stabilize...")
+                    time.sleep(DELAY_BETWEEN_PLACEMENTS_S)
             except client.exceptions.ApiException as exc:
-                if getattr(exc, "status", None) == 409:
-                    _STATS["bind_conflict"] += 1
-                    _log(
-                        f"[fuzzy-scheduler] bind conflict (already assigned): "
-                        f"{pod.metadata.namespace}/{pod.metadata.name}"
-                    )
-                else:
-                    _STATS["bind_failed"] += 1
-                    _log(f"[fuzzy-scheduler] bind failed: {exc}")
-
-        if loop_i % STATS_EVERY == 0:
-            top = ", ".join([f"{k}={v}" for k, v in _STATS.most_common(10)])
-            _log(f"[fuzzy-scheduler] stats {top}")
-
-        elapsed = time.time() - loop_start
-        if elapsed > SLOW_LOOP_S:
-            _log(f"[fuzzy-scheduler] loop={loop_i} SLOW_LOOP elapsed={elapsed:.3f}s")
-        if loop_i % LOOP_LOG_EVERY == 0:
-            _log(f"[fuzzy-scheduler] loop={loop_i} tick end elapsed={elapsed:.3f}s")
-        time.sleep(POLL_INTERVAL)
-
-
+                print(f"[fuzzy-scheduler] ✗ Bind failed for {pod.metadata.name}: {exc}")
+        # Summary
+        cycle_duration = time.time() - cycle_start
+        print(f"[fuzzy-scheduler] Cycle complete: {placements_this_cycle} placement(s) in {cycle_duration:.1f}s")
+        # Wait until next poll interval
+        remaining_sleep = max(0, POLL_INTERVAL - cycle_duration)
+        if remaining_sleep > 0:
+            print(f"[fuzzy-scheduler] Sleeping {remaining_sleep:.1f}s until next cycle\n")
+            time.sleep(remaining_sleep)
+ 
+ 
 if __name__ == "__main__":
     main()
