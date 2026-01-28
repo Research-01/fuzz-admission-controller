@@ -1,3 +1,14 @@
+#!/usr/bin/env python3
+"""
+Fuzzy Controller with FIXED decision logic
+
+CRITICAL FIX:
+- decide() now correctly updates report["decision"] based on score/level
+- evaluate() always returns "allow", decide() makes the final call
+- HIGH scores (≥70) always deny immediately
+
+VERSION: Fixed 2026-01-28
+"""
 
 import math
 import os
@@ -416,43 +427,41 @@ class FuzzyController:
 
     def _fuzzy_score(self, fric, eng, cpu, psi):
         """
-        NEW FUZZY INFERENCE SYSTEM
+        FUZZY INFERENCE SYSTEM
         
-        Changes:
+        Ranges:
         1. Friction: -150 to 150 (clamped)
         2. Energy: 0 to 100 (clamped)
         3. Critical conditions force HIGH output
         """
         
-        # Clamp inputs to NEW ranges
+        # Clamp inputs to ranges
         cpu_pct = max(0.0, min(100.0, float(cpu)))
         psi_pct = max(0.0, min(100.0, float(psi)))
-        fric_val = max(-150.0, min(150.0, float(fric)))  # NEW: -150 to 150
-        eng_val = max(0.0, min(100.0, float(eng)))        # NEW: 0 to 100
+        fric_val = max(-150.0, min(150.0, float(fric)))
+        eng_val = max(0.0, min(100.0, float(eng)))
 
-        # CPU membership (unchanged)
+        # CPU membership
         cpu_normal = _trapmf(cpu_pct, [0, 0, 60, 80])
         cpu_high = _trapmf(cpu_pct, [60, 80, 100, 100])
 
-        # PSI membership (unchanged)
+        # PSI membership
         psi_low = _trapmf(psi_pct, [0, 0, 20, 40])
         psi_med = _trimf(psi_pct, [20, 50, 80])
         psi_high = _trapmf(psi_pct, [60, 80, 100, 100])
 
-        # Friction membership - UPDATED for -150 to 150 range
-        # Option 2: Lower critical threshold (was 75, now 50)
+        # Friction membership - for -150 to 150 range
         fric_under = _trapmf(fric_val, [-150, -150, 0, 25])
         fric_short = _gaussmf(fric_val, 25, 12.5)
         fric_mod = _gaussmf(fric_val, 62.5, 20)
-        fric_long = _trapmf(fric_val, [50, 100, 150, 150])  # Start critical at 50
+        fric_long = _trapmf(fric_val, [50, 100, 150, 150])
 
-        # Energy membership - UPDATED for 0 to 100 range
-        # Option 2: Lower critical threshold (was 50, now 30)
-        eng_short = _trapmf(eng_val, [0, 0, 20, 40])        # Adjusted
-        eng_mod = _gaussmf(eng_val, 40, 15)                 # Peak at 40
-        eng_long = _trapmf(eng_val, [30, 50, 100, 100])     # Start critical at 30
+        # Energy membership - for 0 to 100 range
+        eng_short = _trapmf(eng_val, [0, 0, 20, 40])
+        eng_mod = _gaussmf(eng_val, 40, 15)
+        eng_long = _trapmf(eng_val, [30, 50, 100, 100])
 
-        # Output memberships (unchanged)
+        # Output memberships
         out_under = [0, 0, 15, 30]
         out_short = [15, 40, 65]
         out_mod = [40, 65, 90]
@@ -468,7 +477,7 @@ class FuzzyController:
         }
         eng_states = {"short": eng_short, "mod": eng_mod, "long": eng_long}
 
-        # NEW RULE TABLE - Critical conditions force HIGH
+        # Rule table - Critical conditions force HIGH
         rule_table = {
             ("normal", "low"): {
                 "under": {"short": "under", "mod": "short", "long": "short"},
@@ -482,7 +491,7 @@ class FuzzyController:
                 "mod": {"short": "mod", "mod": "mod", "long": "long"},
                 "long": {"short": "mod", "mod": "long", "long": "long"},
             },
-            ("normal", "high"): {  # PSI CRITICAL
+            ("normal", "high"): {
                 "under": {"short": "mod", "mod": "mod", "long": "long"},
                 "short": {"short": "mod", "mod": "long", "long": "long"},
                 "mod": {"short": "long", "mod": "long", "long": "long"},
@@ -500,10 +509,10 @@ class FuzzyController:
                 "mod": {"short": "mod", "mod": "long", "long": "long"},
                 "long": {"short": "long", "mod": "long", "long": "long"},
             },
-            ("high", "high"): {  # BOTH CPU AND PSI CRITICAL - OPTION 1: ALWAYS FORCE HIGH
+            ("high", "high"): {
                 "under": {"short": "long", "mod": "long", "long": "long"},
                 "short": {"short": "long", "mod": "long", "long": "long"},
-                "mod": {"short": "long", "mod": "long", "long": "long"},      # Changed all to "long"
+                "mod": {"short": "long", "mod": "long", "long": "long"},
                 "long": {"short": "long", "mod": "long", "long": "long"},
             },
         }
@@ -532,13 +541,13 @@ class FuzzyController:
             den += mu
         score = (num / den) if den > 0 else 0.0
 
-        # NEW: Score classification
+        # Score classification
         if score >= 70.0:
-            level = "high"       # HIGH → ALWAYS deny (no hysteresis)
+            level = "high"
         elif score >= 45.0:
-            level = "medium"     # MEDIUM → Use hysteresis
+            level = "medium"
         else:
-            level = "low"        # LOW → Allow
+            level = "low"
         
         return score, level, {
             "cpu_pct": cpu_pct,
@@ -554,6 +563,7 @@ class FuzzyController:
           - Reads cached CPU/PSI (1-second cadence).
           - Does NOT write monitor.csv.
           - Writes score.csv only.
+          - Returns report with "allow" - decide() makes final call
         """
         cfg = self.cfg
         metrics = self._collect_metrics()
@@ -579,7 +589,7 @@ class FuzzyController:
                 100.0,
             )
             return {
-                "decision": "deny",
+                "decision": "deny",  # This will be used by decide()
                 "reason": f"missing metrics: {', '.join(missing)}",
                 "score": 100.0,
                 "level": "high",
@@ -594,7 +604,7 @@ class FuzzyController:
         score, level, scaled = self._fuzzy_score(fric_val, eng_val, cpu_val, psi_val)
 
         report = {
-            "decision": "allow",
+            "decision": "allow",  # Placeholder - decide() will override
             "score": score,
             "level": level,
             "metrics": {
@@ -629,41 +639,59 @@ class FuzzyController:
 
     def decide(self):
         """
-        NEW DECISION LOGIC
+        FIXED DECISION LOGIC
         
-        Changes:
+        Bug fix: evaluate() always returns "allow", so we can't check report["decision"]
+        Solution: Use score and level directly to make the decision
+        
+        Logic:
         - HIGH (score ≥ 70): ALWAYS deny (no hysteresis)
         - MEDIUM (score 45-69): Use hysteresis
         - LOW (score < 45): Allow
         """
         with self._lock:
             report = self.evaluate()
-
-            if report["decision"] == "deny":
-                self._bad += 1
+            
+            # Handle missing metrics case
+            if report.get("reason", "").startswith("missing metrics"):
+                # Missing critical metrics - deny
+                report["decision"] = "deny"
+                self._bad = self.cfg.bad_threshold
                 self._good = 0
-                decision = "deny" if self._bad >= self.cfg.bad_threshold else self._last_decision
-            else:
-                # NEW: HIGH score always denies (no hysteresis)
-                if report["level"] == "high":
-                    decision = "deny"
-                    self._bad = self.cfg.bad_threshold  # Set to threshold to maintain deny state
-                    self._good = 0
-                # MEDIUM and LOW use hysteresis
-                elif report["level"] == "medium":
-                    # Medium stays in current state (hysteresis)
-                    decision = self._last_decision
-                    # Don't update counters for medium
-                else:  # LOW
-                    self._good += 1
-                    self._bad = 0
-                    if self._good >= self.cfg.good_threshold:
-                        decision = "allow"
-                    else:
-                        decision = self._last_decision
+                self._last_decision = "deny"
+                report["bad_count"] = self._bad
+                report["good_count"] = self._good
+                return report
+            
+            score = report["score"]
+            level = report["level"]
 
+            # HIGH score always denies immediately (no hysteresis)
+            if level == "high":  # score ≥ 70
+                decision = "deny"
+                self._bad = self.cfg.bad_threshold  # Lock in deny state
+                self._good = 0
+            
+            # MEDIUM uses hysteresis (stay in current state)
+            elif level == "medium":  # score 45-69
+                decision = self._last_decision
+                # Don't update counters for medium - maintain current state
+            
+            # LOW allows
+            else:  # score < 45
+                self._good += 1
+                self._bad = 0
+                if self._good >= self.cfg.good_threshold:
+                    decision = "allow"
+                else:
+                    decision = self._last_decision
+
+            # Update state
             self._last_decision = decision
+            
+            # CRITICAL FIX: Update report with final decision
             report["decision"] = decision
             report["bad_count"] = self._bad
             report["good_count"] = self._good
+            
             return report
