@@ -10,7 +10,7 @@ metadata:
   name: fuzzy-scheduler
 rules:
   - apiGroups: [""]
-    resources: ["pods", "pods/binding", "bindings", "nodes", "endpoints"]
+    resources: ["pods", "pods/binding", "bindings", "nodes", "endpoints", "services"]
     verbs: ["get", "list", "watch", "create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -52,6 +52,14 @@ spec:
           env:
             - name: FUZZY_SCHEDULER_NAME
               value: "fuzzy-scheduler"
+            - name: FUZZY_SCHEDULER_POLL_S
+              value: "10"
+            - name: FUZZY_SCHEDULER_MAX_PER_CYCLE
+              value: "1"
+            - name: FUZZY_SCHEDULER_PLACEMENT_DELAY_S
+              value: "5"
+            - name: PYTHONUNBUFFERED
+              value: "1"
             - name: FUZZY_WEBHOOK_SERVICE
               value: "ksense-fuzzy-webhook"
             - name: FUZZY_WEBHOOK_NAMESPACE

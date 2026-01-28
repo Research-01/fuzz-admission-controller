@@ -44,6 +44,8 @@ spec:
               value: /etc/fuzzy/tls/tls.crt
             - name: FUZZY_TLS_KEY
               value: /etc/fuzzy/tls/tls.key
+            - name: FUZZY_BAD_THRESHOLD
+              value: "1"
           ports:
             - name: https
               containerPort: 8443

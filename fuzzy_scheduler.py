@@ -276,7 +276,12 @@ def _bind_pod(core: client.CoreV1Api, pod, node_name: str):
     target = client.V1ObjectReference(kind="Node", api_version="v1", name=node_name)
     meta = client.V1ObjectMeta(name=pod.metadata.name)
     binding = client.V1Binding(target=target, metadata=meta)
-    core.create_namespaced_binding(pod.metadata.namespace, binding)
+    try:
+        # Work around python-client response deserialization bug for bindings.
+        # The API returns a Status object, not a Binding, which can raise ValueError.
+        core.create_namespaced_binding(pod.metadata.namespace, binding, _preload_content=False)
+    except ValueError as exc:
+        print(f"[fuzzy-scheduler] ! Binding response parse failed: {exc}")
 
 
 def main():

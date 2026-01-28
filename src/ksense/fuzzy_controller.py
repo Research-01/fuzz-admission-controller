@@ -1,3 +1,15 @@
+#!/usr/bin/env python3
+"""
+Fuzzy Controller with FIXED decision logic
+
+CRITICAL FIX:
+- decide() now correctly updates report["decision"] based on score/level
+- evaluate() always returns "allow", decide() makes the final call
+- HIGH scores (≥70) always deny immediately
+
+VERSION: Fixed 2026-01-28
+"""
+
 import math
 import os
 import subprocess
@@ -7,8 +19,6 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
-
-from .helpers import ensure_csv
 
 
 @dataclass
@@ -51,7 +61,6 @@ def _trimf(x, params):
 
 
 def _trapmf(x, params):
-    # Inclusive endpoints; fixes CPU=100 / PSI=100 membership edge case
     a, b, c, d = params
     if x < a or x > d:
         return 0.0
@@ -144,8 +153,8 @@ class ResourceSampler:
         self._prev_idle = None
         self._psi_prev = {}
 
-        self.last_cpu: Optional[float] = None  # 0..100
-        self.last_psi: Optional[float] = None  # 0..100
+        self.last_cpu: Optional[float] = None
+        self.last_psi: Optional[float] = None
 
     def cpu_util(self):
         try:
@@ -174,7 +183,6 @@ class ResourceSampler:
 
     def psi(self):
         psi_vals = []
-        # monotonic clock is correct for interval computations
         now = time.monotonic()
 
         for path in ("/proc/pressure/cpu", "/proc/pressure/memory", "/proc/pressure/io"):
@@ -208,7 +216,6 @@ class ResourceSampler:
             if delta_us < 0:
                 continue
 
-            # % of time stalled over the interval
             psi_pct = (delta_us / 1_000_000.0) / dt * 100.0
             psi_vals.append(psi_pct)
 
@@ -250,8 +257,16 @@ class FuzzyController:
         self._rules_thread = None
         self._rules_stop = threading.Event()
 
-        ensure_csv(self.cfg.monitor_csv, ["Time", "FrictionSigned", "Energy", "CPUUtil", "PSI", "Score"])
-        ensure_csv(self.cfg.score_csv, ["Time", "FrictionSigned", "Energy", "CPUUtil", "PSI", "Score"])
+        # Ensure CSV files exist with headers
+        self._ensure_csv(self.cfg.monitor_csv, ["Time", "FrictionSigned", "Energy", "CPUUtil", "PSI", "Score"])
+        self._ensure_csv(self.cfg.score_csv, ["Time", "FrictionSigned", "Energy", "CPUUtil", "PSI", "Score"])
+
+    def _ensure_csv(self, path, headers):
+        """Ensure CSV file exists with headers"""
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if not os.path.exists(path):
+            with open(path, "w", newline="") as f:
+                f.write(",".join(headers) + "\n")
 
     def start_monitoring(self, interval_s: float = 1.0):
         if self._monitor_thread and self._monitor_thread.is_alive():
@@ -392,14 +407,13 @@ class FuzzyController:
         critical_missing = [name for name in missing if name in ("friction", "energy")]
 
         if critical_missing and not cfg.allow_on_missing:
-            # still log the monitor row; score=1.0 to represent "high severity"
             fric_signed = (fric or 0.0) * (last_direction or 1.0)
             self._write_monitor_sample(
                 fric_signed,
                 eng or 0.0,
                 cpu or 0.0,
                 psi or 0.0,
-                1.0,
+                100.0,  # Max score for missing critical metrics
             )
             return
 
@@ -412,12 +426,20 @@ class FuzzyController:
         self._write_monitor_sample(fric_val, eng_val, cpu_val, psi_val, score)
 
     def _fuzzy_score(self, fric, eng, cpu, psi):
-        # Fixed input axes:
-        # CPU: 0-100, PSI: 0-100, Friction: -300..300, Energy: 0..300
+        """
+        FUZZY INFERENCE SYSTEM
+        
+        Ranges:
+        1. Friction: -150 to 150 (clamped)
+        2. Energy: 0 to 100 (clamped)
+        3. Critical conditions force HIGH output
+        """
+        
+        # Clamp inputs to ranges
         cpu_pct = max(0.0, min(100.0, float(cpu)))
         psi_pct = max(0.0, min(100.0, float(psi)))
-        fric_val = max(-300.0, min(300.0, float(fric)))
-        eng_val = max(0.0, min(300.0, float(eng)))
+        fric_val = max(-150.0, min(150.0, float(fric)))
+        eng_val = max(0.0, min(100.0, float(eng)))
 
         # CPU membership
         cpu_normal = _trapmf(cpu_pct, [0, 0, 60, 80])
@@ -428,18 +450,18 @@ class FuzzyController:
         psi_med = _trimf(psi_pct, [20, 50, 80])
         psi_high = _trapmf(psi_pct, [60, 80, 100, 100])
 
-        # Friction membership (-300..300)
-        fric_under = _trapmf(fric_val, [-300, -300, 0, 50])
-        fric_short = _gaussmf(fric_val, 50, 25)
-        fric_mod = _gaussmf(fric_val, 125, 40)
-        fric_long = _trapmf(fric_val, [150, 250, 300, 300])
+        # Friction membership - for -150 to 150 range
+        fric_under = _trapmf(fric_val, [-150, -150, 0, 25])
+        fric_short = _gaussmf(fric_val, 25, 12.5)
+        fric_mod = _gaussmf(fric_val, 62.5, 20)
+        fric_long = _trapmf(fric_val, [50, 100, 150, 150])
 
-        # Energy membership (0..300)
-        eng_short = _trapmf(eng_val, [0, 0, 90, 150])
-        eng_mod = _gaussmf(eng_val, 150, 45)
-        eng_long = _trapmf(eng_val, [150, 210, 300, 300])
+        # Energy membership - for 0 to 100 range
+        eng_short = _trapmf(eng_val, [0, 0, 20, 40])
+        eng_mod = _gaussmf(eng_val, 40, 15)
+        eng_long = _trapmf(eng_val, [30, 50, 100, 100])
 
-        # Output memberships (0..100)
+        # Output memberships
         out_under = [0, 0, 15, 30]
         out_short = [15, 40, 65]
         out_mod = [40, 65, 90]
@@ -455,6 +477,7 @@ class FuzzyController:
         }
         eng_states = {"short": eng_short, "mod": eng_mod, "long": eng_long}
 
+        # Rule table - Critical conditions force HIGH
         rule_table = {
             ("normal", "low"): {
                 "under": {"short": "under", "mod": "short", "long": "short"},
@@ -469,9 +492,9 @@ class FuzzyController:
                 "long": {"short": "mod", "mod": "long", "long": "long"},
             },
             ("normal", "high"): {
-                "under": {"short": "short", "mod": "mod", "long": "mod"},
-                "short": {"short": "mod", "mod": "mod", "long": "long"},
-                "mod": {"short": "mod", "mod": "long", "long": "long"},
+                "under": {"short": "mod", "mod": "mod", "long": "long"},
+                "short": {"short": "mod", "mod": "long", "long": "long"},
+                "mod": {"short": "long", "mod": "long", "long": "long"},
                 "long": {"short": "long", "mod": "long", "long": "long"},
             },
             ("high", "low"): {
@@ -487,25 +510,25 @@ class FuzzyController:
                 "long": {"short": "long", "mod": "long", "long": "long"},
             },
             ("high", "high"): {
-                "under": {"short": "mod", "mod": "mod", "long": "long"},
-                "short": {"short": "mod", "mod": "mod", "long": "long"},
-                "mod": {"short": "mod", "mod": "long", "long": "long"},
+                "under": {"short": "long", "mod": "long", "long": "long"},
+                "short": {"short": "long", "mod": "long", "long": "long"},
+                "mod": {"short": "long", "mod": "long", "long": "long"},
                 "long": {"short": "long", "mod": "long", "long": "long"},
             },
         }
 
+        # Inference
         out_strength = {"under": 0.0, "short": 0.0, "mod": 0.0, "long": 0.0}
         for cpu_key, cpu_mu in cpu_states.items():
             for psi_key, psi_mu in psi_states.items():
-                table = rule_table[(cpu_key, psi_key)]
                 for fric_key, fric_mu in fric_states.items():
                     for eng_key, eng_mu in eng_states.items():
-                        out_key = table[fric_key][eng_key]
+                        out_key = rule_table[(cpu_key, psi_key)][fric_key][eng_key]
                         strength = min(cpu_mu, psi_mu, fric_mu, eng_mu)
                         if strength > out_strength[out_key]:
                             out_strength[out_key] = strength
 
-        # Aggregate output membership and defuzzify via centroid
+        # Defuzzification
         num = 0.0
         den = 0.0
         for x in range(0, 101):
@@ -518,12 +541,14 @@ class FuzzyController:
             den += mu
         score = (num / den) if den > 0 else 0.0
 
+        # Score classification
         if score >= 70.0:
             level = "high"
         elif score >= 45.0:
             level = "medium"
         else:
             level = "low"
+        
         return score, level, {
             "cpu_pct": cpu_pct,
             "psi_pct": psi_pct,
@@ -538,6 +563,7 @@ class FuzzyController:
           - Reads cached CPU/PSI (1-second cadence).
           - Does NOT write monitor.csv.
           - Writes score.csv only.
+          - Returns report with "allow" - decide() makes final call
         """
         cfg = self.cfg
         metrics = self._collect_metrics()
@@ -560,12 +586,12 @@ class FuzzyController:
                 eng or 0.0,
                 cpu or 0.0,
                 psi or 0.0,
-                1.0,
+                100.0,
             )
             return {
-                "decision": "deny",
+                "decision": "deny",  # This will be used by decide()
                 "reason": f"missing metrics: {', '.join(missing)}",
-                "score": 1.0,
+                "score": 100.0,
                 "level": "high",
                 "metrics": {},
                 "missing": missing,
@@ -578,7 +604,7 @@ class FuzzyController:
         score, level, scaled = self._fuzzy_score(fric_val, eng_val, cpu_val, psi_val)
 
         report = {
-            "decision": "allow",
+            "decision": "allow",  # Placeholder - decide() will override
             "score": score,
             "level": level,
             "metrics": {
@@ -598,12 +624,10 @@ class FuzzyController:
             "missing": missing,
         }
 
-        # score.csv updates only on evaluate/decide
         self._write_score_sample(fric_val, eng_val, cpu_val, psi_val, score)
         return report
 
     def _write_monitor_sample(self, friction_signed, energy, cpu, psi, score):
-        # monitor loop already enforces 1 Hz cadence; do not throttle here
         ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(self.cfg.monitor_csv, "a", newline="") as f:
             f.write(f"{ts_str},{friction_signed:.6f},{energy:.6f},{cpu:.6f},{psi:.6f},{score:.3f}\n")
@@ -614,29 +638,60 @@ class FuzzyController:
             f.write(f"{ts_str},{friction_signed:.6f},{energy:.6f},{cpu:.6f},{psi:.6f},{score:.3f}\n")
 
     def decide(self):
+        """
+        FIXED DECISION LOGIC
+        
+        Bug fix: evaluate() always returns "allow", so we can't check report["decision"]
+        Solution: Use score and level directly to make the decision
+        
+        Logic:
+        - HIGH (score ≥ 70): ALWAYS deny (no hysteresis)
+        - MEDIUM (score 45-69): Use hysteresis
+        - LOW (score < 45): Allow
+        """
         with self._lock:
             report = self.evaluate()
-
-            if report["decision"] == "deny":
-                self._bad += 1
+            
+            # Handle missing metrics case
+            if report.get("reason", "").startswith("missing metrics"):
+                # Missing critical metrics - deny
+                report["decision"] = "deny"
+                self._bad = self.cfg.bad_threshold
                 self._good = 0
-                decision = "deny" if self._bad >= self.cfg.bad_threshold else self._last_decision
-            else:
-                if report["level"] == "high":
-                    self._bad += 1
-                    self._good = 0
-                else:
-                    self._good += 1
-                    self._bad = 0
-                if report["level"] == "high" and self._bad >= self.cfg.bad_threshold:
-                    decision = "deny"
-                elif report["level"] != "high" and self._good >= self.cfg.good_threshold:
+                self._last_decision = "deny"
+                report["bad_count"] = self._bad
+                report["good_count"] = self._good
+                return report
+            
+            score = report["score"]
+            level = report["level"]
+
+            # HIGH score always denies immediately (no hysteresis)
+            if level == "high":  # score ≥ 70
+                decision = "deny"
+                self._bad = self.cfg.bad_threshold  # Lock in deny state
+                self._good = 0
+            
+            # MEDIUM uses hysteresis (stay in current state)
+            elif level == "medium":  # score 45-69
+                decision = self._last_decision
+                # Don't update counters for medium - maintain current state
+            
+            # LOW allows
+            else:  # score < 45
+                self._good += 1
+                self._bad = 0
+                if self._good >= self.cfg.good_threshold:
                     decision = "allow"
                 else:
                     decision = self._last_decision
 
+            # Update state
             self._last_decision = decision
+            
+            # CRITICAL FIX: Update report with final decision
             report["decision"] = decision
             report["bad_count"] = self._bad
             report["good_count"] = self._good
+            
             return report
