@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-Fuzzy Scheduler with Rate Limiting - FINAL PRODUCTION VERSION
+Fuzzy Scheduler with Rate Limiting - UPDATED (deterministic endpoint->node mapping)
 
-FEATURES:
-1. Rate limiting: Max N pods per cycle (default: 1)
-2. Fresh score per pod: Re-queries for each placement
-3. Stabilization delay: Wait M seconds between placements (default: 5s)
-4. Crash prevention: Robust None checks and error handling
-5. Clean logging: No SSL warnings, detailed status messages
+Fixes included:
+1) Deterministic mapping from webhook endpoint IP (pod IP) -> webhook pod -> pod.spec.nodeName
+   using the Service selector (instead of Endpoints.addresses[].nodeName which is often empty).
+2) Strict node_name normalization before binding (prevents `Invalid value for target`).
+3) Light caching for Service selector + podIP->node map to reduce API calls.
 
 CONFIGURATION (Environment Variables):
 - FUZZY_SCHEDULER_NAME: Scheduler name (default: "fuzzy-scheduler")
@@ -20,14 +19,18 @@ CONFIGURATION (Environment Variables):
 - FUZZY_WEBHOOK_SCHEME: http or https (default: "https")
 - FUZZY_INSECURE_TLS: Skip cert verification (default: "true")
 
-VERSION: 3.0 Final
+Optional cache tuning:
+- FUZZY_SELECTOR_CACHE_TTL_S (default: 15)
+- FUZZY_PODMAP_CACHE_TTL_S (default: 5)
+
+VERSION: 3.1
 DATE: 2026-01-28
 """
 
 import os
 import sys
 import time
-import warnings
+from typing import Dict, List, Optional, Tuple
 
 # Suppress SSL warnings (expected with self-signed certs)
 import urllib3
@@ -36,11 +39,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import requests
 from kubernetes import client, config
 
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(ROOT, "src")
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
-
 
 # Configuration from environment variables
 SCHEDULER_NAME = os.getenv("FUZZY_SCHEDULER_NAME", "fuzzy-scheduler")
@@ -55,18 +58,30 @@ POLL_INTERVAL = float(os.getenv("FUZZY_SCHEDULER_POLL_S", "10"))
 MAX_PLACEMENTS_PER_CYCLE = int(os.getenv("FUZZY_SCHEDULER_MAX_PER_CYCLE", "1"))
 DELAY_BETWEEN_PLACEMENTS_S = float(os.getenv("FUZZY_SCHEDULER_PLACEMENT_DELAY_S", "5"))
 
+# Cache tuning
+_SELECTOR_CACHE_TTL_S = float(os.getenv("FUZZY_SELECTOR_CACHE_TTL_S", "15"))
+_PODMAP_CACHE_TTL_S = float(os.getenv("FUZZY_PODMAP_CACHE_TTL_S", "5"))
+
 
 def _load_kube():
-    """Load Kubernetes configuration (in-cluster or kubeconfig)"""
+    """Load Kubernetes configuration (in-cluster or kubeconfig)."""
     try:
         config.load_incluster_config()
     except config.config_exception.ConfigException:
         config.load_kube_config()
 
 
-def _list_webhook_endpoints(core):
+def _normalize_node_name(node_name) -> Optional[str]:
+    """Return stripped node_name or None if invalid."""
+    if node_name is None:
+        return None
+    s = str(node_name).strip()
+    return s if s else None
+
+
+def _list_webhook_endpoints(core: client.CoreV1Api) -> List[Tuple[str, int]]:
     """
-    List all webhook endpoint IPs from service endpoints.
+    List all webhook endpoint IPs from Service Endpoints.
     Returns: [(ip, port), ...]
     """
     try:
@@ -74,8 +89,8 @@ def _list_webhook_endpoints(core):
     except client.exceptions.ApiException as e:
         print(f"[fuzzy-scheduler] ✗ Failed to read endpoints: {e}")
         return []
-    
-    addrs = []
+
+    addrs: List[Tuple[str, int]] = []
     for subset in ep.subsets or []:
         port = WEBHOOK_PORT
         if subset.ports:
@@ -84,11 +99,12 @@ def _list_webhook_endpoints(core):
                     port = p.port
                     break
         for addr in subset.addresses or []:
-            addrs.append((addr.ip, port))
+            if addr and addr.ip:
+                addrs.append((addr.ip, port))
     return addrs
 
 
-def _score_endpoint(ip, port):
+def _score_endpoint(ip: str, port: int) -> Optional[dict]:
     """
     Query a single webhook endpoint for fuzzy score.
     Returns: dict with {"score": float, "decision": str, ...} or None
@@ -98,81 +114,133 @@ def _score_endpoint(ip, port):
         resp = requests.get(url, timeout=1.5, verify=not INSECURE)
         resp.raise_for_status()
         return resp.json()
-    except requests.RequestException as e:
-        # Don't log every failure - webhook might be starting up
+    except requests.RequestException:
+        # Webhook might be starting up or temporarily unreachable
         return None
 
 
-def _choose_node(core):
+class WebhookPodResolver:
+    """
+    Resolve Service endpoint IPs (pod IPs) to node names:
+        endpoint IP -> pod (by status.podIP) -> pod.spec.nodeName
+
+    This is deterministic for selector-based Services.
+    Uses small TTL caches to reduce API calls.
+    """
+
+    def __init__(self, core: client.CoreV1Api):
+        self.core = core
+        self._selector_cache: Tuple[float, Dict[str, str]] = (0.0, {})
+        self._podmap_cache: Tuple[float, Dict[str, str]] = (0.0, {})
+
+    def _get_service_selector(self) -> Dict[str, str]:
+        now = time.time()
+        cached_at, selector = self._selector_cache
+        if selector and (now - cached_at) < _SELECTOR_CACHE_TTL_S:
+            return selector
+
+        try:
+            svc = self.core.read_namespaced_service(WEBHOOK_SERVICE, WEBHOOK_NAMESPACE)
+            selector = svc.spec.selector or {}
+        except Exception as e:
+            print(f"[fuzzy-scheduler] ✗ Failed to read Service selector: {e}")
+            selector = {}
+
+        self._selector_cache = (now, selector)
+        return selector
+
+    def _get_pod_ip_to_node_map(self) -> Dict[str, str]:
+        now = time.time()
+        cached_at, podmap = self._podmap_cache
+        if podmap and (now - cached_at) < _PODMAP_CACHE_TTL_S:
+            return podmap
+
+        selector = self._get_service_selector()
+        if not selector:
+            self._podmap_cache = (now, {})
+            return {}
+
+        label_selector = ",".join([f"{k}={v}" for k, v in selector.items()])
+
+        ip_to_node: Dict[str, str] = {}
+        try:
+            pods = self.core.list_namespaced_pod(WEBHOOK_NAMESPACE, label_selector=label_selector).items
+            for p in pods:
+                ip = getattr(p.status, "pod_ip", None)
+                node = getattr(p.spec, "node_name", None)
+                if ip and node:
+                    ip_to_node[ip] = node
+        except Exception as e:
+            print(f"[fuzzy-scheduler] ✗ Failed to list webhook pods for selector '{label_selector}': {e}")
+            ip_to_node = {}
+
+        self._podmap_cache = (now, ip_to_node)
+        return ip_to_node
+
+    def endpoint_ip_to_node(self, endpoint_ip: str) -> Optional[str]:
+        node = self._get_pod_ip_to_node_map().get(endpoint_ip)
+        return _normalize_node_name(node)
+
+
+def _choose_node(core: client.CoreV1Api, resolver: WebhookPodResolver):
     """
     Choose best node based on current fuzzy scores.
-    
+
     Returns: (node_name, score, report) tuple
     - (str, float, dict): Successful node selection
     - (None, None, None): No suitable node found (all denied or unreachable)
     """
     endpoints = _list_webhook_endpoints(core)
-    
+
     if not endpoints:
-        print(f"[fuzzy-scheduler] ✗ No webhook endpoints available")
+        print("[fuzzy-scheduler] ✗ No webhook endpoints available")
         return None, None, None
-    
+
     best = None
     all_reports = []
-    
+
     # Query all endpoints
     for ip, port in endpoints:
         report = _score_endpoint(ip, port)
         if not report:
             continue
+
         all_reports.append((ip, port, report))
-        
-        # Skip nodes that deny
+
+        # Skip endpoints that deny
         if report.get("decision") == "deny":
             continue
-        
+
         score = report.get("score")
         if score is None:
             continue
-        
+
         # Track best (lowest) score
         if best is None or score < best["score"]:
             best = {"ip": ip, "port": port, "score": score, "report": report}
-    
-    # All nodes denied or unreachable
+
+    # All denied/unreachable
     if not best:
         if all_reports:
-            # Log denial reasons
             reasons = []
-            for ip, port, report in all_reports:
+            for ip, _port, report in all_reports:
                 score = report.get("score", "N/A")
                 decision = report.get("decision", "unknown")
                 reasons.append(f"{ip}:score={score},decision={decision}")
             print(f"[fuzzy-scheduler] All nodes denied: {'; '.join(reasons)}")
         return None, None, None
-    
-    # Map endpoint IP to node name
-    try:
-        ep = core.read_namespaced_endpoints(WEBHOOK_SERVICE, WEBHOOK_NAMESPACE)
-        for subset in ep.subsets or []:
-            for addr in subset.addresses or []:
-                if addr.ip == best["ip"] and addr.node_name:
-                    return addr.node_name, best["score"], best["report"]
-    except Exception as e:
-        print(f"[fuzzy-scheduler] ✗ Failed to map IP to node: {e}")
-    
-    # Fallback: if only one node in cluster, use it
-    try:
-        nodes = core.list_node().items
-        if len(nodes) == 1:
-            return nodes[0].metadata.name, best["score"], best["report"]
-    except Exception as e:
-        print(f"[fuzzy-scheduler] ✗ Failed to list nodes: {e}")
-    
+
+    # Deterministic mapping: endpoint IP (pod IP) -> webhook pod -> nodeName
+    node_name = resolver.endpoint_ip_to_node(best["ip"])
+    if node_name:
+        return node_name, best["score"], best["report"]
+
+    # If mapping fails, log useful info and return None (don’t bind with bad target)
+    print(f"[fuzzy-scheduler] ✗ Could not map webhook endpoint IP {best['ip']} to a nodeName")
     return None, None, None
 
 
-def _pending_pods(core):
+def _pending_pods(core: client.CoreV1Api):
     """
     Get all pending pods that use this scheduler.
     Returns: list of V1Pod objects
@@ -182,28 +250,29 @@ def _pending_pods(core):
     except client.exceptions.ApiException as e:
         print(f"[fuzzy-scheduler] ✗ Failed to list pods: {e}")
         return []
-    
+
     pending = []
     for pod in pods:
-        # Only handle pods for this scheduler
         if pod.spec.scheduler_name != SCHEDULER_NAME:
             continue
-        # Skip already scheduled pods
         if pod.spec.node_name:
             continue
-        # Only Pending phase
         if pod.status.phase != "Pending":
             continue
         pending.append(pod)
-    
+
     return pending
 
 
-def _bind_pod(core, pod, node_name):
+def _bind_pod(core: client.CoreV1Api, pod, node_name: str):
     """
     Bind a pod to a node.
     Raises: ApiException on failure
     """
+    node_name = _normalize_node_name(node_name)
+    if not node_name:
+        raise ValueError("node_name is empty/invalid after normalization")
+
     target = client.V1ObjectReference(kind="Node", api_version="v1", name=node_name)
     meta = client.V1ObjectMeta(name=pod.metadata.name)
     binding = client.V1Binding(target=target, metadata=meta)
@@ -211,97 +280,86 @@ def _bind_pod(core, pod, node_name):
 
 
 def main():
-    """Main scheduler loop"""
+    """Main scheduler loop."""
     _load_kube()
     core = client.CoreV1Api()
-    
-    # Print startup banner
+    resolver = WebhookPodResolver(core)
+
+    # Startup banner
     print("=" * 80)
-    print(f"FUZZY SCHEDULER v3.0 - Production Ready")
+    print("FUZZY SCHEDULER v3.1 - Deterministic Mapping")
     print("=" * 80)
     print(f"Scheduler name: {SCHEDULER_NAME}")
-    print(f"Webhook: {WEBHOOK_SCHEME}://{WEBHOOK_SERVICE}.{WEBHOOK_NAMESPACE}:{WEBHOOK_PORT}")
+    print(f"Webhook service: {WEBHOOK_SERVICE}.{WEBHOOK_NAMESPACE}:{WEBHOOK_PORT} ({WEBHOOK_SCHEME})")
     print(f"Poll interval: {POLL_INTERVAL}s")
     print(f"Max placements per cycle: {MAX_PLACEMENTS_PER_CYCLE}")
     print(f"Delay between placements: {DELAY_BETWEEN_PLACEMENTS_S}s")
     print(f"TLS verification: {'disabled' if INSECURE else 'enabled'}")
     print("=" * 80)
     print()
-    
+
     while True:
         cycle_start = time.time()
-        
-        # Get pending pods
+
         pods = _pending_pods(core)
-        
         if not pods:
-            # No work to do
             time.sleep(POLL_INTERVAL)
             continue
-        
+
         print(f"[fuzzy-scheduler] Found {len(pods)} pending pod(s)")
-        
         placements_this_cycle = 0
-        
-        for pod in pods:
-            # CRITICAL: Check rate limit BEFORE processing
+
+        for idx, pod in enumerate(pods):
+            # Rate limit check
             if placements_this_cycle >= MAX_PLACEMENTS_PER_CYCLE:
-                remaining = len(pods) - pods.index(pod)
+                remaining = len(pods) - idx
                 print(f"[fuzzy-scheduler] Rate limit reached ({MAX_PLACEMENTS_PER_CYCLE} placements/cycle)")
                 print(f"[fuzzy-scheduler] {remaining} pod(s) will be tried next cycle")
-                break  # Stop processing, wait for next cycle
-            
-            # Query fresh score for THIS pod
+                break
+
             pod_key = f"{pod.metadata.namespace}/{pod.metadata.name}"
             print(f"[fuzzy-scheduler] Querying nodes for {pod_key}")
-            node_name, score, report = _choose_node(core)
-            
-            # No suitable node available
+
+            node_name, score, report = _choose_node(core, resolver)
+            node_name = _normalize_node_name(node_name)
+
             if not node_name:
-                print(f"[fuzzy-scheduler] No suitable node for {pod.metadata.name} (all denied or unavailable)")
-                continue  # Try next pod
-            
-            # Defensive check (should never happen, but be safe)
-            if node_name is None:
-                print(f"[fuzzy-scheduler] ✗ ERROR: node_name is None for {pod.metadata.name} - skipping")
+                print(f"[fuzzy-scheduler] No suitable node for {pod.metadata.name} (all denied/unavailable/unmappable)")
                 continue
-            
-            # Attempt to bind pod to node
+
             try:
                 _bind_pod(core, pod, node_name)
-                placements_this_cycle += 1  # Increment immediately after successful bind
-                
-                # Success logging
+                placements_this_cycle += 1
+
                 print(f"[fuzzy-scheduler] ✓ Bound {pod_key} -> {node_name}")
-                print(f"[fuzzy-scheduler]   Score: {score:.2f}, Level: {report.get('level', 'N/A')}")
+                try:
+                    # score may be None if report is odd; be defensive
+                    score_f = float(score) if score is not None else None
+                    if score_f is not None:
+                        print(f"[fuzzy-scheduler]   Score: {score_f:.2f}, Level: {report.get('level', 'N/A')}")
+                    else:
+                        print(f"[fuzzy-scheduler]   Score: N/A, Level: {report.get('level', 'N/A')}")
+                except Exception:
+                    print(f"[fuzzy-scheduler]   Score: {score}, Level: {report.get('level', 'N/A')}")
+
                 print(f"[fuzzy-scheduler]   Placements this cycle: {placements_this_cycle}/{MAX_PLACEMENTS_PER_CYCLE}")
-                
-                # Delay AFTER successful placement (let system stabilize)
-                # Only delay if:
-                # 1. We haven't reached the rate limit yet
-                # 2. There are more pods to process
+
+                # Stabilization delay if we might place another in same cycle
                 if placements_this_cycle < MAX_PLACEMENTS_PER_CYCLE:
-                    pods_remaining = len(pods) - pods.index(pod) - 1
+                    pods_remaining = len(pods) - idx - 1
                     if pods_remaining > 0:
                         print(f"[fuzzy-scheduler]   Waiting {DELAY_BETWEEN_PLACEMENTS_S}s for system to stabilize...")
                         time.sleep(DELAY_BETWEEN_PLACEMENTS_S)
-                
+
             except client.exceptions.ApiException as exc:
-                # Binding failed (pod might be gone, node might be unavailable, etc.)
                 print(f"[fuzzy-scheduler] ✗ Bind failed for {pod.metadata.name}: {exc}")
-                # Don't count as successful placement
-                
             except Exception as exc:
-                # Unexpected error
                 print(f"[fuzzy-scheduler] ✗ Unexpected error for {pod.metadata.name}: {exc}")
-                # Don't count as successful placement
-        
-        # Cycle summary
+
         cycle_duration = time.time() - cycle_start
         print(f"[fuzzy-scheduler] Cycle complete: {placements_this_cycle} placement(s) in {cycle_duration:.1f}s")
-        
-        # Sleep until next poll interval (account for time already spent)
-        remaining_sleep = max(0, POLL_INTERVAL - cycle_duration)
+
+        remaining_sleep = max(0.0, POLL_INTERVAL - cycle_duration)
         if remaining_sleep > 0:
             print(f"[fuzzy-scheduler] Sleeping {remaining_sleep:.1f}s until next cycle\n")
             time.sleep(remaining_sleep)
