@@ -40,14 +40,25 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 _json_response(self, 400, {"error": "invalid json"})
                 return
 
+            req = review.get("request", {}) or {}
+            uid = req.get("uid", "")
+            operation = (req.get("operation") or "").upper()
+            kind = ((req.get("kind") or {}).get("kind") or "")
+
+            # Always compute report for visibility/audit
             report = self.server.controller.decide()
 
-            uid = review.get("request", {}).get("uid", "")
-            allowed = report["decision"] == "allow"
+            # Always allow Pod CREATE; scheduler keeps pods Pending on deny.
+            always_allow = (operation == "CREATE" and kind == "Pod")
 
-            msg = f"decision={report['decision']} score={report['score']:.3f} level={report['level']}"
+            allowed = True if always_allow else (report.get("decision") == "allow")
+
+            msg = f"decision={report.get('decision')} score={float(report.get('score', 0.0)):.3f} level={report.get('level')}"
             if report.get("reason"):
                 msg = f"{msg} reason={report['reason']}"
+
+            if always_allow and report.get("decision") != "allow":
+                msg = f"{msg} (CREATE override: allowed=true)"
 
             response = {
                 "apiVersion": review.get("apiVersion", "admission.k8s.io/v1"),
@@ -57,9 +68,12 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     "allowed": allowed,
                     "status": {"message": msg},
                     "auditAnnotations": {
-                        "fuzzy.score": f"{report['score']:.3f}",
-                        "fuzzy.level": report["level"],
-                        "fuzzy.decision": report["decision"],
+                        "fuzzy.score": f"{float(report.get('score', 0.0)):.3f}",
+                        "fuzzy.level": str(report.get("level", "")),
+                        "fuzzy.decision": str(report.get("decision", "")),
+                        "fuzzy.operation": operation,
+                        "fuzzy.kind": kind,
+                        "fuzzy.create_override": "true" if always_allow else "false",
                     },
                 },
             }

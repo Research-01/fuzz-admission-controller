@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fuzzy-test-1
+spec:
+  schedulerName: fuzzy-scheduler
+  containers:
+    - name: pause
+      image: k8s.gcr.io/pause:3.9
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fuzzy-test-2
+spec:
+  schedulerName: fuzzy-scheduler
+  containers:
+    - name: pause
+      image: k8s.gcr.io/pause:3.9
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fuzzy-test-3
+spec:
+  schedulerName: fuzzy-scheduler
+  containers:
+    - name: pause
+      image: k8s.gcr.io/pause:3.9
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fuzzy-test-4
+spec:
+  schedulerName: fuzzy-scheduler
+  containers:
+    - name: pause
+      image: k8s.gcr.io/pause:3.9
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fuzzy-test-5
+spec:
+  schedulerName: fuzzy-scheduler
+  containers:
+    - name: pause
+      image: k8s.gcr.io/pause:3.9
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fuzzy-test-6
+spec:
+  schedulerName: fuzzy-scheduler
+  containers:
+    - name: pause
+      image: k8s.gcr.io/pause:3.9
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fuzzy-test-7
+spec:
+  schedulerName: fuzzy-scheduler
+  containers:
+    - name: pause
+      image: k8s.gcr.io/pause:3.9
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fuzzy-test-8
+spec:
+  schedulerName: fuzzy-scheduler
+  containers:
+    - name: pause
+      image: k8s.gcr.io/pause:3.9
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fuzzy-test-9
+spec:
+  schedulerName: fuzzy-scheduler
+  containers:
+    - name: pause
+      image: k8s.gcr.io/pause:3.9
