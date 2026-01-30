@@ -639,22 +639,32 @@ class FuzzyController:
 
     def decide(self):
         """
-        FIXED DECISION LOGIC
-        
-        Bug fix: evaluate() always returns "allow", so we can't check report["decision"]
-        Solution: Use score and level directly to make the decision
-        
-        Logic:
-        - HIGH (score ≥ 70): ALWAYS deny (no hysteresis)
-        - MEDIUM (score 45-69): Use hysteresis
-        - LOW (score < 45): Allow
+        Safer + more dynamic decision logic.
+
+        Levels (unchanged):
+        - HIGH:   score >= 70  -> deny immediately
+        - MEDIUM: 45..69       -> dynamic hysteresis (not static)
+        - LOW:    score < 45   -> counts strongly toward allow
+
+        Medium is split into:
+        - 45..55  : "medium-low"  -> counts toward allow (good++)
+        - 55..60  : "medium-mid"  -> hold (no counter changes)
+        - 60..70  : "medium-high" -> counts toward deny (bad++)
         """
+
+        # You can tune this without changing code
+        medium_low_upper = float(os.getenv("FUZZY_MEDIUM_LOW_UPPER", "55"))
+        medium_mid_upper = float(os.getenv("FUZZY_MEDIUM_MID_UPPER", "60"))
+
+        # How many consecutive "bad-ish" samples before we deny in medium-high
+        # (keeps it safe, avoids flipping on a single noisy sample)
+        medium_bad_threshold = int(os.getenv("FUZZY_MEDIUM_BAD_THRESHOLD", "2"))
+
         with self._lock:
             report = self.evaluate()
-            
-            # Handle missing metrics case
+
+            # Missing critical metrics case stays hard deny (same as your current logic)
             if report.get("reason", "").startswith("missing metrics"):
-                # Missing critical metrics - deny
                 report["decision"] = "deny"
                 self._bad = self.cfg.bad_threshold
                 self._good = 0
@@ -662,36 +672,57 @@ class FuzzyController:
                 report["bad_count"] = self._bad
                 report["good_count"] = self._good
                 return report
-            
-            score = report["score"]
+
+            score = float(report["score"])
             level = report["level"]
 
-            # HIGH score always denies immediately (no hysteresis)
-            if level == "high":  # score ≥ 70
+            # HIGH: deny immediately, lock deny
+            if level == "high":  # score >= 70
                 decision = "deny"
-                self._bad = self.cfg.bad_threshold  # Lock in deny state
+                self._bad = self.cfg.bad_threshold
                 self._good = 0
-            
-            # MEDIUM uses hysteresis (stay in current state)
-            elif level == "medium":  # score 45-69
-                decision = self._last_decision
-                # Don't update counters for medium - maintain current state
-            
-            # LOW allows
-            else:  # score < 45
+
+            # LOW: move toward allow (strongly)
+            elif level == "low":  # score < 45
                 self._good += 1
                 self._bad = 0
-                if self._good >= self.cfg.good_threshold:
-                    decision = "allow"
-                else:
-                    decision = self._last_decision
+                decision = "allow" if self._good >= self.cfg.good_threshold else self._last_decision
 
-            # Update state
+            # MEDIUM: dynamic instead of static
+            else:  # 45 <= score < 70
+                if score < medium_low_upper:
+                    # medium-low: system is reasonably safe -> counts toward allow
+                    self._good += 1
+                    self._bad = 0
+                    decision = "allow" if self._good >= self.cfg.good_threshold else self._last_decision
+
+                elif score < medium_mid_upper:
+                    # medium-mid: deadband -> hold last decision
+                    decision = self._last_decision
+                    # counters unchanged
+
+                else:
+                    # medium-high: trending risky -> counts toward deny, but not instantly
+                    self._bad += 1
+                    self._good = 0
+                    if self._bad >= medium_bad_threshold:
+                        decision = "deny"
+                    else:
+                        decision = self._last_decision
+
+            # Update state + report
             self._last_decision = decision
-            
-            # CRITICAL FIX: Update report with final decision
             report["decision"] = decision
             report["bad_count"] = self._bad
             report["good_count"] = self._good
-            
+
+            # Optional: include the medium band label for debugging
+            if level == "medium":
+                if score < medium_low_upper:
+                    report["medium_band"] = "medium-low"
+                elif score < medium_mid_upper:
+                    report["medium_band"] = "medium-mid"
+                else:
+                    report["medium_band"] = "medium-high"
+
             return report
