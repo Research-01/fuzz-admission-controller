@@ -8,6 +8,48 @@ Important behavior: the webhook always allows Pod CREATE and only records the
 score/decision. The scheduler decides whether to bind the pod; if the score is
 too high, the pod stays Pending.
 
+### Collector-only (no webhook / no Docker / no Kubernetes)
+
+If you only want kernel metrics + derived friction/energy + CPU/PSI in **one CSV**
+directly on a node, run the collector from your terminal:
+
+1) Install system deps (Ubuntu example):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y bpfcc-tools python3-bpfcc python3-pip linux-headers-$(uname -r)
+```
+
+2) Install Python deps:
+
+```bash
+python3 -m pip install -r requirements.collector.txt
+```
+
+3) Run (needs root/privileges for eBPF):
+
+```bash
+sudo mount -t tracefs nodev /sys/kernel/tracing 2>/dev/null || true
+sudo mount -t debugfs none /sys/kernel/debug 2>/dev/null || true
+
+sudo -E KSENSE_METRICS_CSV=/tmp/ksense/kernel_metrics.csv python3 collector_only.py
+```
+
+Output file (single CSV):
+- `/tmp/ksense/kernel_metrics.csv` (override with `KSENSE_METRICS_CSV`)
+
+CSV columns include:
+- scheduler runnable latency stats (avg/p95/p99/max, counts)
+- D-state time stats
+- softirq NET_RX time stats
+- `CPUUtil` and `PSI` (sampled from `/proc`)
+- baseline state + derived `Friction`, `Direction`, `Energy` (+ energy internals)
+
+Notes:
+- The first row may have empty `CPUUtil`/`PSI` (delta-based sampling needs a previous sample).
+- During warmup/baseline calibration, `Friction`/`Energy` fields are empty until the baseline freezes (default warmup is 600s).
+- Watch it live: `tail -f /tmp/ksense/kernel_metrics.csv`
+
 ### What runs
 
 - Kernel metrics collector (per-node DaemonSet) -> shared metrics CSV
@@ -81,8 +123,11 @@ default (see the validating webhook manifest).
 
 Inside the DaemonSet pod (shared data dir):
 - `kernel_metrics.csv`
-- `fuzzy_monitor.csv` (1s)
-- `fuzzy_score.csv`
+- `fuzzy_monitor.csv` (1s, written by the webhook controller)
+- `fuzzy_score.csv` (written by the webhook controller)
+
+Collector-only mode (no webhook) writes only:
+- `kernel_metrics.csv`
 
 Example:
 

@@ -107,13 +107,21 @@ def _parse_recent_metrics(cfg: FuzzyConfig):
     except ValueError:
         return []
 
+    cpu_idx = headers.index("CPUUtil") if "CPUUtil" in headers else None
+    psi_idx = headers.index("PSI") if "PSI" in headers else None
+
     now = datetime.now()
     long_cutoff = now - timedelta(seconds=cfg.long_win_s)
     entries = []
     start_idx = 1 if lines and lines[0] == header_line else 0
     for line in lines[start_idx:]:
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) <= max(time_idx, fric_idx, eng_idx, dir_idx):
+        max_required = max(time_idx, fric_idx, eng_idx, dir_idx)
+        if cpu_idx is not None:
+            max_required = max(max_required, cpu_idx)
+        if psi_idx is not None:
+            max_required = max(max_required, psi_idx)
+        if len(parts) <= max_required:
             continue
         ts = parts[time_idx]
         try:
@@ -137,7 +145,22 @@ def _parse_recent_metrics(cfg: FuzzyConfig):
             dir_val = float(direction) if direction else None
         except ValueError:
             dir_val = None
-        entries.append((ts_dt, fric_val, eng_val, dir_val))
+        cpu_val = None
+        psi_val = None
+        if cpu_idx is not None:
+            cpu_s = parts[cpu_idx]
+            try:
+                cpu_val = float(cpu_s) if cpu_s else None
+            except ValueError:
+                cpu_val = None
+        if psi_idx is not None:
+            psi_s = parts[psi_idx]
+            try:
+                psi_val = float(psi_s) if psi_s else None
+            except ValueError:
+                psi_val = None
+
+        entries.append((ts_dt, fric_val, eng_val, dir_val, cpu_val, psi_val))
     return entries
 
 
@@ -357,26 +380,38 @@ class FuzzyController:
 
     def _collect_metrics(self):
         """
-        Uses cached CPU/PSI from the 1 Hz sampler.
+        Reads friction/energy from the kernel metrics CSV and prefers CPU/PSI
+        from that same CSV when available; otherwise falls back to cached
+        CPU/PSI from the 1 Hz sampler.
         """
         cfg = self.cfg
         entries = _parse_recent_metrics(cfg)
         fric = None
         eng = None
         last_direction = None
+        csv_cpu = None
+        csv_psi = None
 
-        for _ts, fric_val, eng_val, direction in reversed(entries):
+        for _ts, fric_val, eng_val, direction, cpu_val, psi_val in reversed(entries):
             if fric_val is None or eng_val is None:
                 continue
             fric = fric_val
             eng = eng_val
             last_direction = direction
+            csv_cpu = cpu_val
+            csv_psi = psi_val
             break
 
         if fric is not None and last_direction is not None:
             fric = fric * last_direction
 
-        cpu, psi = self._sampler.cached()
+        cpu = csv_cpu
+        psi = csv_psi
+        cached_cpu, cached_psi = self._sampler.cached()
+        if cpu is None:
+            cpu = cached_cpu
+        if psi is None:
+            psi = cached_psi
 
         return {
             "fric": fric,

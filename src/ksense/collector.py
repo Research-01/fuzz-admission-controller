@@ -1,4 +1,5 @@
 import csv
+import os
 import time
 from collections import deque
 from datetime import datetime
@@ -23,13 +24,179 @@ from .config import (
 from .energy import AdaptiveVolatilityEnergy
 from .friction import mahalanobis_distance_and_direction
 from .helpers import ensure_csv, percentiles_from_subbucket_hist
+
+
+class ResourceSampler:
+    """
+    Sample node CPU utilization and PSI from /proc.
+    Keeps internal state to compute deltas between calls.
+    """
+
+    def __init__(self):
+        self._prev_total = None
+        self._prev_idle = None
+        self._psi_prev = {}
+
+    def cpu_util(self):
+        try:
+            with open("/proc/stat", "r", encoding="utf-8") as f:
+                line = f.readline()
+        except FileNotFoundError:
+            return None
+
+        parts = line.split()
+        if len(parts) < 5:
+            return None
+
+        try:
+            values = [int(v) for v in parts[1:]]
+        except ValueError:
+            return None
+
+        idle = values[3] + (values[4] if len(values) > 4 else 0)
+        total = sum(values)
+
+        if self._prev_total is None:
+            self._prev_total = total
+            self._prev_idle = idle
+            return None
+
+        total_delta = total - self._prev_total
+        idle_delta = idle - self._prev_idle
+        self._prev_total = total
+        self._prev_idle = idle
+
+        if total_delta <= 0:
+            return None
+
+        util = 1.0 - (idle_delta / total_delta)
+        return max(0.0, min(100.0, util * 100.0))
+
+    def psi(self):
+        psi_vals = []
+        now = time.monotonic()
+
+        for path in ("/proc/pressure/cpu", "/proc/pressure/memory", "/proc/pressure/io"):
+            total_us = None
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    lines = f.read().splitlines()
+            except FileNotFoundError:
+                continue
+
+            for line in lines:
+                if line.startswith("some"):
+                    for part in line.split():
+                        if part.startswith("total="):
+                            try:
+                                total_us = float(part.split("=")[1])
+                            except ValueError:
+                                total_us = None
+
+            if total_us is None:
+                continue
+
+            prev = self._psi_prev.get(path)
+            self._psi_prev[path] = (total_us, now)
+            if not prev:
+                continue
+
+            prev_total, prev_ts = prev
+            dt = now - prev_ts
+            if dt <= 0:
+                continue
+            delta_us = total_us - prev_total
+            if delta_us < 0:
+                continue
+
+            psi_pct = (delta_us / 1_000_000.0) / dt * 100.0
+            psi_vals.append(psi_pct)
+
+        if not psi_vals:
+            return None
+
+        psi = max(psi_vals)
+        return max(0.0, min(100.0, psi))
+
+
+_REQUIRED_TRACEPOINTS = [
+    ("sched", "sched_wakeup"),
+    ("sched", "sched_wakeup_new"),
+    ("sched", "sched_switch"),
+    ("irq", "softirq_entry"),
+    ("irq", "softirq_exit"),
+    ("sched", "sched_process_exit"),
+]
+
+
+def _has_tracepoint_format(category: str, event: str) -> bool:
+    for p in (
+        f"/sys/kernel/tracing/events/{category}/{event}/format",
+        f"/sys/kernel/debug/tracing/events/{category}/{event}/format",
+    ):
+        if os.path.exists(p) and os.access(p, os.R_OK):
+            return True
+    return False
+
+
+def _preflight_or_die() -> None:
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        raise SystemExit(
+            "This collector needs root privileges for eBPF.\n"
+            "Run: sudo -E python3 collector_only.py"
+        )
+
+    missing = [(c, e) for (c, e) in _REQUIRED_TRACEPOINTS if not _has_tracepoint_format(c, e)]
+    if missing:
+        missing_s = ", ".join([f"{c}:{e}" for c, e in missing])
+        raise SystemExit(
+            "Required tracepoint format files are not readable; BCC cannot build TRACEPOINT_PROBE structs.\n"
+            f"Missing/unreadable: {missing_s}\n\n"
+            "Fix (run as root) by mounting tracefs/debugfs:\n"
+            "  sudo mount -t tracefs nodev /sys/kernel/tracing 2>/dev/null || true\n"
+            "  sudo mount -t debugfs none /sys/kernel/debug 2>/dev/null || true\n\n"
+            "Also ensure the kernel exposes these tracepoints and that /sys is not restricted."
+        )
+
+
+def _ensure_or_rotate_csv(path: str, headers: list) -> None:
+    """
+    Ensure a CSV exists with the expected header. If the file exists but the
+    header differs (e.g., after adding new columns), rotate it aside.
+    """
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    expected = ",".join(headers)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                first = f.readline().strip()
+        except OSError:
+            first = ""
+
+        if first and first != expected:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            rotated = os.path.join(parent, f"kernel_metrics_{ts}.csv")
+            try:
+                os.rename(path, rotated)
+            except OSError:
+                pass
+
+    ensure_csv(path, headers)
+
+
 def main():
+    _preflight_or_die()
     headers = [
         "Time",
         "SchedLat_Total_ms", "SchedLat_Avg_ms", "SchedLat_P95_ms", "SchedLat_P99_ms", "SchedLat_Max_ms",
         "SchedLat_Count", "SchedLat_Dropped",
         "DState_Total_ms", "DState_Count",
         "SoftIRQ_Total_ms", "SoftIRQ_Count",
+        "CPUUtil",
+        "PSI",
         "BaselineMode",
         "BaselineSamples",
         "Friction",
@@ -40,7 +207,7 @@ def main():
         "Energy_Vol",
         "Energy_kFactor",
     ]
-    ensure_csv(OUT_CSV, headers)
+    _ensure_or_rotate_csv(OUT_CSV, headers)
 
     baseline_w = max(10, int(BASELINE_WIN_S / GRID_STEP_S))
 
@@ -57,6 +224,7 @@ def main():
 
     baseline_X = None
     energy_calc = AdaptiveVolatilityEnergy()
+    resource = ResourceSampler()
 
     calib_fric_b = deque(maxlen=max(10, int(ENERGY_CALIB_WIN_S / GRID_STEP_S)))
 
@@ -173,6 +341,9 @@ def main():
             energy, w = energy_calc.update(friction)
             eng_b.append(float(energy) if np.isfinite(energy) else float("nan"))
 
+            cpu_util = resource.cpu_util()
+            psi = resource.psi()
+
             # --- CSV Output ---
             with open(OUT_CSV, "a", newline="") as f:
                 csv.writer(f).writerow([
@@ -182,6 +353,8 @@ def main():
                     sched_cnt, sched_dropped,
                     f"{dstate_total_ms:.2f}", dstate_cnt,
                     f"{softirq_total_ms:.2f}", softirq_cnt,
+                    f"{cpu_util:.6f}" if cpu_util is not None else "",
+                    f"{psi:.6f}" if psi is not None else "",
                     baseline_mode,
                     len(baseline_feat_b) if baseline_X is None else baseline_X.shape[0],
                     f"{friction:.6f}" if np.isfinite(friction) else "",
