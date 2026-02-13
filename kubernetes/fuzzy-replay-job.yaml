@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fuzzy-replay
+  namespace: ksense
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: fuzzy-replay
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: replay
+          image: your-registry/fuzzy-ksense:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python3
+            - scripts/replay_controller_on_csv.py
+            - --input
+            - /data/kernel_metrics.csv
+            - --output
+            - /tmp/ksense/fuzzy_replay.csv
+            - --print-every
+            - "100"
+          volumeMounts:
+            - name: replay-data
+              mountPath: /data
+              readOnly: true
+            - name: ksense-tmp
+              mountPath: /tmp/ksense
+      volumes:
+        - name: replay-data
+          configMap:
+            name: fuzzy-replay-data
+        - name: ksense-tmp
+          emptyDir: {}

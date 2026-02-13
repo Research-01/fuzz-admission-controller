@@ -128,3 +128,15 @@ python3 scripts/replay_controller_on_csv.py --input /path/to/kernel_metrics.csv 
 ```
 
 This writes `/tmp/ksense/fuzzy_replay.csv` by default.
+
+#### Run replay inside Kubernetes (pod/job)
+
+If you want the replay to run **inside the cluster**, use the Job manifest:
+
+```bash
+scripts/create_replay_configmap.sh /path/to/kernel_metrics.csv
+kubectl apply -f kubernetes/fuzzy-replay-job.yaml
+kubectl logs -n ksense -l app=fuzzy-replay -f
+```
+
+The Job writes `/tmp/ksense/fuzzy_replay.csv` in the pod.
