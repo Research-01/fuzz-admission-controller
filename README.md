@@ -117,3 +117,14 @@ python3 scripts/realtime_fuzzy_plot.py \
   --inputs /tmp/fuzzy_monitor.csv \
   --scores /tmp/fuzzy_score.csv
 ```
+
+### Offline replay (test controller behavior on a captured CSV)
+
+If you have a captured `kernel_metrics.csv` (e.g., copied from another server) and want
+to see what the controller would decide for each row:
+
+```bash
+python3 scripts/replay_controller_on_csv.py --input /path/to/kernel_metrics.csv --tail 10000 --print-every 100
+```
+
+This writes `/tmp/ksense/fuzzy_replay.csv` by default.
