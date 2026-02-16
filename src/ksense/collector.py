@@ -225,8 +225,10 @@ def main():
     baseline_X = None
     energy_calc = AdaptiveVolatilityEnergy()
     resource = ResourceSampler()
+    Fcal = None
 
     calib_fric_b = deque(maxlen=max(10, int(ENERGY_CALIB_WIN_S / GRID_STEP_S)))
+    fcal_min_samples = max(30, int(ENERGY_CALIB_WIN_S / GRID_STEP_S))
 
     print("\n=== K-Sense Kernel Collector (Frozen Baseline + Adaptive Energy Window) ===")
     print(f"Sampling Rate: {GRID_STEP_S}s")
@@ -317,7 +319,21 @@ def main():
                     else:
                         baseline_mode = "CALIBRATING"
             else:
-                friction, direction = mahalanobis_distance_and_direction(x_t, baseline_X)
+                friction, _ = mahalanobis_distance_and_direction(x_t, baseline_X)
+
+                if Fcal is None and len(calib_fric_b) >= fcal_min_samples:
+                    Fcal = float(np.mean(calib_fric_b))
+                    print(f"[CALIB] Friction baseline mean Fcal = {Fcal:.6f}")
+
+                if Fcal is not None and np.isfinite(friction):
+                    if friction > Fcal:
+                        direction = 1.0
+                    elif friction < Fcal:
+                        direction = -1.0
+                    else:
+                        direction = 0.0
+                else:
+                    direction = float("nan")
 
             fric_b.append(float(friction))
             dir_b.append(float(direction))
