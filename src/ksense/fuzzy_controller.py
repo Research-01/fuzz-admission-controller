@@ -124,9 +124,14 @@ def _parse_recent_metrics(cfg: FuzzyConfig):
         if len(parts) <= max_required:
             continue
         ts = parts[time_idx]
-        try:
-            ts_dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
+        ts_dt = None
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+            try:
+                ts_dt = datetime.strptime(ts, fmt)
+                break
+            except ValueError:
+                continue
+        if ts_dt is None:
             continue
         if ts_dt < long_cutoff:
             continue

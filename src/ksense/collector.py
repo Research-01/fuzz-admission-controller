@@ -241,13 +241,17 @@ def main():
     print("Press Ctrl+C to stop.\n")
 
     t0 = time.time()
+    next_t = time.monotonic()
 
     try:
         while True:
-            time.sleep(WINDOW_SEC)
+            now_m = time.monotonic()
+            if now_m < next_t:
+                time.sleep(next_t - now_m)
+            next_t += WINDOW_SEC
 
             now = datetime.now()
-            ts_str = now.strftime("%Y-%m-%d %H:%M:%S")
+            ts_str = now.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
             # --- read BPF stats ---
             sched_total_ms = sched_avg_ms = sched_p95_ms = sched_p99_ms = sched_max_ms = 0.0
