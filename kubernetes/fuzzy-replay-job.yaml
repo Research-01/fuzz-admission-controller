@@ -13,7 +13,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: replay
-          image: your-registry/fuzzy-ksense:latest
+          image: your-registry/fuzzy-only:latest
           imagePullPolicy: IfNotPresent
           command:
             - python3

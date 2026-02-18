@@ -17,7 +17,7 @@ spec:
       hostPID: true
       containers:
         - name: ksense
-          image: your-registry/fuzzy-ksense:latest
+          image: your-registry/fuzzy-only:latest
           imagePullPolicy: Always
           securityContext:
             privileged: true
@@ -34,7 +34,7 @@ spec:
               mountPath: /usr/src
               readOnly: true
         - name: fuzzy-webhook
-          image: your-registry/fuzzy-ksense:latest
+          image: your-registry/fuzzy-only:latest
           imagePullPolicy: Always
           command: ["python3", "fuzzy_webhook.py"]
           env:
@@ -46,6 +46,8 @@ spec:
               value: /etc/fuzzy/tls/tls.key
             - name: FUZZY_BAD_THRESHOLD
               value: "1"
+            - name: KSENSE_METRICS_CSV
+              value: /tmp/ksense/kernel_metrics_emulated.csv
           ports:
             - name: https
               containerPort: 8443
