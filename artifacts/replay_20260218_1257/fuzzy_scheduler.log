@@ -1,0 +1,187 @@
+================================================================================
+FUZZY SCHEDULER v3.1 - Deterministic Mapping
+================================================================================
+Scheduler name: fuzzy-scheduler
+Webhook service: ksense-fuzzy-webhook.ksense:8443 (https)
+Poll interval: 10.0s
+Max placements per cycle: 1
+Delay between placements: 5.0s
+TLS verification: disabled
+================================================================================
+
+[fuzzy-scheduler] Found 9 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-1
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-1 -> hostnode
+[fuzzy-scheduler]   Score: 17.88, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 8 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.4s
+[fuzzy-scheduler] Sleeping 9.6s until next cycle
+
+[fuzzy-scheduler] Found 8 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-2
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-2 -> hostnode
+[fuzzy-scheduler]   Score: 18.05, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 7 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 7 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-3
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-3 -> hostnode
+[fuzzy-scheduler]   Score: 18.19, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 6 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 6 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-4
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-4 -> hostnode
+[fuzzy-scheduler]   Score: 17.89, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 5 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 5 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-5
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-5 -> hostnode
+[fuzzy-scheduler]   Score: 18.15, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 4 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 4 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-6
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-6 -> hostnode
+[fuzzy-scheduler]   Score: 18.02, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 3 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 3 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-7
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-7 -> hostnode
+[fuzzy-scheduler]   Score: 17.43, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 2 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 2 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-8
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-8 -> hostnode
+[fuzzy-scheduler]   Score: 17.47, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 1 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 1 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-9
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-9 -> hostnode
+[fuzzy-scheduler]   Score: 18.09, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 9 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-1
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-1 -> hostnode
+[fuzzy-scheduler]   Score: 17.83, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 8 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 8 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-2
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-2 -> hostnode
+[fuzzy-scheduler]   Score: 18.05, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 7 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 7 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-3
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-3 -> hostnode
+[fuzzy-scheduler]   Score: 17.88, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 6 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 6 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-4
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-4 -> hostnode
+[fuzzy-scheduler]   Score: 18.05, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 5 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 5 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-5
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-5 -> hostnode
+[fuzzy-scheduler]   Score: 18.19, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 4 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 4 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-6
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-6 -> hostnode
+[fuzzy-scheduler]   Score: 17.89, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 3 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 3 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-7
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-7 -> hostnode
+[fuzzy-scheduler]   Score: 18.15, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 2 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 2 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-8
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-8 -> hostnode
+[fuzzy-scheduler]   Score: 18.02, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Rate limit reached (1 placements/cycle)
+[fuzzy-scheduler] 1 pod(s) will be tried next cycle
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
+[fuzzy-scheduler] Found 1 pending pod(s)
+[fuzzy-scheduler] Querying nodes for default/fuzzy-test-9
+[fuzzy-scheduler] ✓ Bound default/fuzzy-test-9 -> hostnode
+[fuzzy-scheduler]   Score: 17.43, Level: low
+[fuzzy-scheduler]   Placements this cycle: 1/1
+[fuzzy-scheduler] Cycle complete: 1 placement(s) in 0.3s
+[fuzzy-scheduler] Sleeping 9.7s until next cycle
+
