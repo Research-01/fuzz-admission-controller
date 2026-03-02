@@ -1,0 +1,10 @@
+Collector terminal test run
+Generated at: 2026-03-02 12:41:39 CET
+Source CSV: /tmp/ksense/kernel_metrics.csv
+Output CSV: artifacts/collector_only_terminal_test_20260302_124139/kernel_metrics.csv
+Expected columns: Level,Time,NodeName,PodNamespace,PodName,PodUID,...
+rows_total=3042
+rows_node=39
+rows_pod=3003
+unique_timestamps=39
+pod_rows_with_names=3003

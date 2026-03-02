@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - ksense-namespace.yaml
+  - ksense-rbac.yaml
   - ksense-daemonset.yaml
   - fuzzy-webhook-service.yaml
   - fuzzy-webhook-configuration.yaml

@@ -1,0 +1,8 @@
+run_type=collector_only_10min
+exported_at=2026-03-02 11:50:57 CET
+source_pod=collector-only-10m
+total_lines=49534
+node_rows=627
+pod_rows=48906
+first_data_time=2026-03-02 10:40:09.799
+last_data_time=2026-03-02 10:50:35.802

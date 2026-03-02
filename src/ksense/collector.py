@@ -1,12 +1,20 @@
 import csv
 import os
 import re
+import socket
 import time
 from datetime import datetime
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import ctypes as ct
 from bcc import BPF
+
+try:
+    from kubernetes import client as k8s_client
+    from kubernetes import config as k8s_config
+except Exception:
+    k8s_client = None
+    k8s_config = None
 
 from . import bpf_program
 from .config import (
@@ -111,6 +119,74 @@ class ResourceSampler:
 
 
 _POD_UID_RE = re.compile(r"pod([0-9a-fA-F]{8}[-_][0-9a-fA-F]{4}[-_][0-9a-fA-F]{4}[-_][0-9a-fA-F]{4}[-_][0-9a-fA-F]{12})")
+_AT_FDCWD = -100
+
+
+class _FileHandle(ct.Structure):
+    _fields_ = [
+        ("handle_bytes", ct.c_uint),
+        ("handle_type", ct.c_int),
+        ("f_handle", ct.c_ubyte * 128),
+    ]
+
+
+_libc = ct.CDLL(None, use_errno=True)
+_name_to_handle_at = getattr(_libc, "name_to_handle_at", None)
+if _name_to_handle_at is not None:
+    _name_to_handle_at.argtypes = [
+        ct.c_int,
+        ct.c_char_p,
+        ct.POINTER(_FileHandle),
+        ct.POINTER(ct.c_int),
+        ct.c_int,
+    ]
+    _name_to_handle_at.restype = ct.c_int
+
+
+def _cgroup_id_from_path(path: str) -> Optional[int]:
+    """
+    Resolve the cgroup ID in the same 64-bit format returned by
+    bpf_get_current_cgroup_id(). This works on cgroup v2 with kernfs handles.
+    """
+    if _name_to_handle_at is None:
+        return None
+
+    fh = _FileHandle()
+    fh.handle_bytes = 128
+    mount_id = ct.c_int(0)
+    rc = _name_to_handle_at(_AT_FDCWD, path.encode("utf-8"), ct.byref(fh), ct.byref(mount_id), 0)
+    if rc != 0:
+        return None
+
+    raw = bytes(fh.f_handle[: fh.handle_bytes])
+    if len(raw) < 8:
+        return None
+    return int.from_bytes(raw[:8], "little")
+
+
+def _is_populated_cgroup(path: str) -> bool:
+    """
+    Return True when this cgroup has running tasks in its subtree.
+    """
+    events = os.path.join(path, "cgroup.events")
+    try:
+        with open(events, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) == 2 and parts[0] == "populated":
+                    return parts[1] == "1"
+    except OSError:
+        return False
+    return False
+
+
+def _legacy_cgroup_id_file(path: str) -> Optional[int]:
+    cgid_path = os.path.join(path, "cgroup.id")
+    try:
+        with open(cgid_path, "r", encoding="utf-8") as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
 
 
 class CgroupIndex:
@@ -146,13 +222,21 @@ class CgroupIndex:
                 if not m:
                     continue
                 uid = m.group(1).replace("_", "-").lower()
-                cgid_path = os.path.join(dirpath, "cgroup.id")
-                try:
-                    with open(cgid_path, "r", encoding="utf-8") as f:
-                        cgid = int(f.read().strip())
-                except (OSError, ValueError):
+                # Skip stale pod cgroups to avoid writing rows for dead pods.
+                if not _is_populated_cgroup(dirpath):
+                    dirnames[:] = []
                     continue
-                mapping[cgid] = (uid, dirpath)
+
+                # Map all descendant cgroup IDs to the same PodUID.
+                # BPF events commonly arrive on container scope cgroups (children),
+                # not on the pod slice itself.
+                for subpath, _subdirs, _subfiles in os.walk(dirpath):
+                    cgid = _cgroup_id_from_path(subpath)
+                    if cgid is None:
+                        cgid = _legacy_cgroup_id_file(subpath)
+                    if cgid is not None:
+                        mapping[cgid] = (uid, dirpath)
+
                 dirnames[:] = []
         return mapping
 
@@ -251,6 +335,90 @@ class CgroupResourceSampler:
         return max(0.0, min(100.0, psi))
 
 
+class PodMetaResolver:
+    """
+    Resolve PodUID -> (namespace, pod_name, node_name) via Kubernetes API.
+    Falls back to empty mapping when API access is unavailable.
+    """
+
+    def __init__(self, refresh_s: float = 10.0):
+        self._refresh_s = refresh_s
+        self._last_refresh = 0.0
+        self._cache: Dict[str, Tuple[str, str, str]] = {}
+        self._api = None
+        self._warned = False
+        self.node_name = (
+            os.getenv("KSENSE_NODE_NAME")
+            or os.getenv("NODE_NAME")
+            or socket.gethostname()
+        )
+
+    def _warn_once(self, msg: str) -> None:
+        if not self._warned:
+            print(msg)
+            self._warned = True
+
+    def _ensure_api(self) -> bool:
+        if self._api is not None:
+            return True
+        if k8s_client is None or k8s_config is None:
+            self._warn_once(
+                "[WARN] kubernetes python client not available; PodName/Namespace will be empty."
+            )
+            return False
+
+        try:
+            k8s_config.load_incluster_config()
+        except Exception:
+            try:
+                k8s_config.load_kube_config()
+            except Exception:
+                self._warn_once(
+                    "[WARN] Kubernetes API config unavailable; PodName/Namespace will be empty."
+                )
+                return False
+
+        try:
+            self._api = k8s_client.CoreV1Api()
+            return True
+        except Exception:
+            self._warn_once(
+                "[WARN] Failed to initialize Kubernetes API client; PodName/Namespace will be empty."
+            )
+            return False
+
+    def _scan(self) -> Dict[str, Tuple[str, str, str]]:
+        if not self._ensure_api():
+            return {}
+
+        field_selector = f"spec.nodeName={self.node_name}" if self.node_name else None
+        try:
+            pods = self._api.list_pod_for_all_namespaces(field_selector=field_selector).items
+        except Exception:
+            self._warn_once(
+                "[WARN] Cannot list pods (RBAC/API issue); PodName/Namespace will be empty."
+            )
+            return {}
+
+        mapping: Dict[str, Tuple[str, str, str]] = {}
+        for p in pods:
+            uid = str(getattr(p.metadata, "uid", "") or "").lower()
+            if not uid:
+                continue
+            namespace = str(getattr(p.metadata, "namespace", "") or "")
+            pod_name = str(getattr(p.metadata, "name", "") or "")
+            node_name = str(getattr(p.spec, "node_name", "") or "")
+            mapping[uid] = (namespace, pod_name, node_name)
+        return mapping
+
+    def get(self) -> Dict[str, Tuple[str, str, str]]:
+        now = time.monotonic()
+        if not self._cache or (now - self._last_refresh) >= self._refresh_s:
+            self._cache = self._scan()
+            self._last_refresh = now
+        return self._cache
+
+
 _REQUIRED_TRACEPOINTS = [
     ("sched", "sched_wakeup"),
     ("sched", "sched_wakeup_new"),
@@ -324,6 +492,9 @@ def main():
     headers = [
         "Level",
         "Time",
+        "NodeName",
+        "PodNamespace",
+        "PodName",
         "PodUID",
         "CgroupID",
         "SchedLat_Total_ms", "SchedLat_Avg_ms", "SchedLat_P95_ms", "SchedLat_P99_ms", "SchedLat_Max_ms",
@@ -340,6 +511,7 @@ def main():
     resource = ResourceSampler()
     cg_index = CgroupIndex()
     cg_resource = CgroupResourceSampler()
+    pod_meta = PodMetaResolver()
 
     print("\n=== K-Sense Kernel Collector (Node + Pod Metrics) ===")
     print(f"Sampling Rate: {GRID_STEP_S}s")
@@ -413,6 +585,13 @@ def main():
             b["stats_cg"].clear()
 
             pod_map = cg_index.get()
+            pod_meta_map = pod_meta.get()
+            node_name = pod_meta.node_name
+            if pod_meta_map:
+                for _ns, _pod_name, meta_node_name in pod_meta_map.values():
+                    if meta_node_name:
+                        node_name = meta_node_name
+                        break
 
             # --- CSV Output ---
             with open(OUT_CSV, "a", newline="") as f:
@@ -420,6 +599,9 @@ def main():
                 writer.writerow([
                     "node",
                     ts_str,
+                    node_name,
+                    "",
+                    "",
                     "",
                     "",
                     f"{sched_total_ms:.2f}", f"{sched_avg_ms:.4f}", f"{sched_p95_ms:.4f}",
@@ -431,34 +613,59 @@ def main():
                     f"{psi:.6f}" if psi is not None else "",
                 ])
 
-                for cgid, (pod_uid, cg_path) in sorted(pod_map.items(), key=lambda x: x[1][0]):
-                    v = stats_cg.get(cgid)
-                    if v:
-                        sched_cnt_p = v["sched_lat_cnt"]
-                        sched_dropped_p = v["sched_lat_dropped"]
-                        sched_total_ms_p = v["sched_lat_us_sum"] / 1000.0
-                        sched_max_ms_p = v["sched_lat_us_max"] / 1000.0
-                        sched_avg_ms_p = (sched_total_ms_p / sched_cnt_p) if sched_cnt_p else 0.0
-                        dstate_total_ms_p = v["dstate_us_sum"] / 1000.0
-                        dstate_cnt_p = v["dstate_cnt"]
-                        softirq_total_ms_p = v["softirq_us_sum"] / 1000.0
-                        softirq_cnt_p = v["softirq_cnt"]
-                    else:
-                        sched_cnt_p = sched_dropped_p = 0
-                        sched_total_ms_p = sched_avg_ms_p = sched_max_ms_p = 0.0
-                        dstate_total_ms_p = 0.0
-                        dstate_cnt_p = 0
-                        softirq_total_ms_p = 0.0
-                        softirq_cnt_p = 0
+                pods: Dict[str, Dict[str, object]] = {}
+                for cgid, (pod_uid, pod_path) in pod_map.items():
+                    rec = pods.get(pod_uid)
+                    if rec is None:
+                        rec = {"pod_path": pod_path, "cgids": []}
+                        pods[pod_uid] = rec
+                    rec["cgids"].append(cgid)
 
-                    cpu_p = cg_resource.cpu_util(cg_path)
-                    psi_p = cg_resource.psi(cg_path)
+                for pod_uid in sorted(pods.keys()):
+                    rec = pods[pod_uid]
+                    pod_path = rec["pod_path"]
+                    cgids = rec["cgids"]
+
+                    sched_cnt_p = 0
+                    sched_dropped_p = 0
+                    sched_total_ms_p = 0.0
+                    sched_max_ms_p = 0.0
+                    dstate_total_ms_p = 0.0
+                    dstate_cnt_p = 0
+                    softirq_total_ms_p = 0.0
+                    softirq_cnt_p = 0
+
+                    for cgid in cgids:
+                        v = stats_cg.get(cgid)
+                        if not v:
+                            continue
+                        sched_cnt_p += v["sched_lat_cnt"]
+                        sched_dropped_p += v["sched_lat_dropped"]
+                        sched_total_ms_p += v["sched_lat_us_sum"] / 1000.0
+                        sched_max_ms_p = max(sched_max_ms_p, v["sched_lat_us_max"] / 1000.0)
+                        dstate_total_ms_p += v["dstate_us_sum"] / 1000.0
+                        dstate_cnt_p += v["dstate_cnt"]
+                        softirq_total_ms_p += v["softirq_us_sum"] / 1000.0
+                        softirq_cnt_p += v["softirq_cnt"]
+
+                    sched_avg_ms_p = (sched_total_ms_p / sched_cnt_p) if sched_cnt_p else 0.0
+                    cpu_p = cg_resource.cpu_util(pod_path)
+                    psi_p = cg_resource.psi(pod_path)
+                    pod_cgid = min(cgids) if cgids else ""
+                    pod_ns, pod_name, pod_node_name = pod_meta_map.get(
+                        pod_uid, ("", "", node_name)
+                    )
+                    if not pod_node_name:
+                        pod_node_name = node_name
 
                     writer.writerow([
                         "pod",
                         ts_str,
+                        pod_node_name,
+                        pod_ns,
+                        pod_name,
                         pod_uid,
-                        cgid,
+                        pod_cgid,
                         f"{sched_total_ms_p:.2f}", f"{sched_avg_ms_p:.4f}", "",
                         "", f"{sched_max_ms_p:.4f}",
                         sched_cnt_p, sched_dropped_p,

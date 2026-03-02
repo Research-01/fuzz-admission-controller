@@ -1,0 +1,5 @@
+run_type=collector_only_named_sample
+exported_at=2026-03-02 12:04:42 CET
+total_lines=1976
+node_rows=25
+pod_rows=1950

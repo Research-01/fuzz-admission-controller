@@ -15,6 +15,7 @@ spec:
         app: ksense
     spec:
       hostPID: true
+      serviceAccountName: ksense-collector
       containers:
         - name: ksense
           image: your-registry/fuzzy-ksense:latest
@@ -22,6 +23,11 @@ spec:
           securityContext:
             privileged: true
           command: ["python3", "main.py"]
+          env:
+            - name: KSENSE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
           volumeMounts:
             - name: ksense-tmp
               mountPath: /tmp/ksense
