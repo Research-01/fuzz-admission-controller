@@ -1,28 +1,19 @@
 import csv
 import os
+import re
 import time
-from collections import deque
 from datetime import datetime
+from typing import Dict, Tuple
 
 import ctypes as ct
-import numpy as np
 from bcc import BPF
 
 from . import bpf_program
 from .config import (
-    BASELINE_WIN_S,
-    ENERGY_CALIBRATE_AFTER_FREEZE,
-    ENERGY_CALIB_WIN_S,
-    FREEZE_BASELINE_AFTER_WARMUP,
     GRID_STEP_S,
-    MAHAL_MIN_SAMPLES,
-    MIN_SCHED_CNT_FOR_BASELINE,
     OUT_CSV,
-    WARMUP_S,
     WINDOW_SEC,
 )
-from .energy import AdaptiveVolatilityEnergy
-from .friction import mahalanobis_distance_and_direction
 from .helpers import ensure_csv, percentiles_from_subbucket_hist
 
 
@@ -119,6 +110,147 @@ class ResourceSampler:
         return max(0.0, min(100.0, psi))
 
 
+_POD_UID_RE = re.compile(r"pod([0-9a-fA-F]{8}[-_][0-9a-fA-F]{4}[-_][0-9a-fA-F]{4}[-_][0-9a-fA-F]{4}[-_][0-9a-fA-F]{12})")
+
+
+class CgroupIndex:
+    def __init__(self, refresh_s: float = 10.0):
+        self._refresh_s = refresh_s
+        self._last_refresh = 0.0
+        self._cache: Dict[int, Tuple[str, str]] = {}
+        self._warned = False
+
+    def _candidate_roots(self):
+        roots = []
+        for path in ("/sys/fs/cgroup/kubepods.slice", "/sys/fs/cgroup/kubepods"):
+            if os.path.isdir(path):
+                roots.append(path)
+        roots.append("/sys/fs/cgroup")
+        return roots
+
+    def _scan(self) -> Dict[int, Tuple[str, str]]:
+        if not os.path.exists("/sys/fs/cgroup/cgroup.controllers"):
+            if not self._warned:
+                print("[WARN] cgroup v2 not detected; pod-level metrics disabled.")
+                self._warned = True
+            return {}
+
+        mapping: Dict[int, Tuple[str, str]] = {}
+        roots = self._candidate_roots()
+        for root in roots:
+            if not os.path.isdir(root):
+                continue
+            for dirpath, dirnames, _ in os.walk(root):
+                base = os.path.basename(dirpath)
+                m = _POD_UID_RE.search(base)
+                if not m:
+                    continue
+                uid = m.group(1).replace("_", "-").lower()
+                cgid_path = os.path.join(dirpath, "cgroup.id")
+                try:
+                    with open(cgid_path, "r", encoding="utf-8") as f:
+                        cgid = int(f.read().strip())
+                except (OSError, ValueError):
+                    continue
+                mapping[cgid] = (uid, dirpath)
+                dirnames[:] = []
+        return mapping
+
+    def get(self) -> Dict[int, Tuple[str, str]]:
+        now = time.monotonic()
+        if not self._cache or (now - self._last_refresh) >= self._refresh_s:
+            self._cache = self._scan()
+            self._last_refresh = now
+        return self._cache
+
+
+class CgroupResourceSampler:
+    def __init__(self):
+        self._prev_cpu: Dict[str, Tuple[float, float]] = {}
+        self._prev_psi: Dict[str, Tuple[float, float]] = {}
+        self._ncpu = os.cpu_count() or 1
+
+    def cpu_util(self, cg_path: str):
+        stat_path = os.path.join(cg_path, "cpu.stat")
+        usage_usec = None
+        try:
+            with open(stat_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) == 2 and parts[0] == "usage_usec":
+                        usage_usec = float(parts[1])
+                        break
+        except OSError:
+            return None
+
+        if usage_usec is None:
+            return None
+
+        now = time.monotonic()
+        prev = self._prev_cpu.get(cg_path)
+        self._prev_cpu[cg_path] = (usage_usec, now)
+        if not prev:
+            return None
+
+        prev_usage, prev_ts = prev
+        dt = now - prev_ts
+        if dt <= 0:
+            return None
+
+        delta = usage_usec - prev_usage
+        if delta < 0:
+            return None
+
+        util = (delta / 1_000_000.0) / (dt * self._ncpu) * 100.0
+        return max(0.0, min(100.0, util))
+
+    def psi(self, cg_path: str):
+        psi_vals = []
+        now = time.monotonic()
+        for fname in ("cpu.pressure", "memory.pressure", "io.pressure"):
+            path = os.path.join(cg_path, fname)
+            total_us = None
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    lines = f.read().splitlines()
+            except OSError:
+                continue
+
+            for line in lines:
+                if line.startswith("some"):
+                    for part in line.split():
+                        if part.startswith("total="):
+                            try:
+                                total_us = float(part.split("=")[1])
+                            except ValueError:
+                                total_us = None
+
+            if total_us is None:
+                continue
+
+            prev = self._prev_psi.get(path)
+            self._prev_psi[path] = (total_us, now)
+            if not prev:
+                continue
+
+            prev_total, prev_ts = prev
+            dt = now - prev_ts
+            if dt <= 0:
+                continue
+            delta_us = total_us - prev_total
+            if delta_us < 0:
+                continue
+
+            psi_pct = (delta_us / 1_000_000.0) / dt * 100.0
+            psi_vals.append(psi_pct)
+
+        if not psi_vals:
+            return None
+
+        psi = max(psi_vals)
+        return max(0.0, min(100.0, psi))
+
+
 _REQUIRED_TRACEPOINTS = [
     ("sched", "sched_wakeup"),
     ("sched", "sched_wakeup_new"),
@@ -190,57 +322,30 @@ def _ensure_or_rotate_csv(path: str, headers: list) -> None:
 def main():
     _preflight_or_die()
     headers = [
+        "Level",
         "Time",
+        "PodUID",
+        "CgroupID",
         "SchedLat_Total_ms", "SchedLat_Avg_ms", "SchedLat_P95_ms", "SchedLat_P99_ms", "SchedLat_Max_ms",
         "SchedLat_Count", "SchedLat_Dropped",
         "DState_Total_ms", "DState_Count",
         "SoftIRQ_Total_ms", "SoftIRQ_Count",
         "CPUUtil",
         "PSI",
-        "BaselineMode",
-        "BaselineSamples",
-        "Friction",
-        "Direction",
-        "dF_dt",
-        "Energy",
-        "Energy_W",
-        "Energy_Vol",
-        "Energy_kFactor",
     ]
     _ensure_or_rotate_csv(OUT_CSV, headers)
 
-    baseline_w = max(10, int(BASELINE_WIN_S / GRID_STEP_S))
-
-    keep_points = baseline_w + 100
-
-    baseline_feat_b = deque(maxlen=baseline_w)
-
-    fric_b = deque(maxlen=keep_points)
-    dir_b = deque(maxlen=keep_points)
-    dfr_b = deque(maxlen=keep_points)
-    eng_b = deque(maxlen=keep_points)
-
     b = BPF(text=bpf_program.bpf_text, cflags=["-Wno-macro-redefined"])
 
-    baseline_X = None
-    energy_calc = AdaptiveVolatilityEnergy()
     resource = ResourceSampler()
-    Fcal = None
+    cg_index = CgroupIndex()
+    cg_resource = CgroupResourceSampler()
 
-    calib_fric_b = deque(maxlen=max(10, int(ENERGY_CALIB_WIN_S / GRID_STEP_S)))
-    fcal_min_samples = max(30, int(ENERGY_CALIB_WIN_S / GRID_STEP_S))
-
-    print("\n=== K-Sense Kernel Collector (Frozen Baseline + Adaptive Energy Window) ===")
+    print("\n=== K-Sense Kernel Collector (Node + Pod Metrics) ===")
     print(f"Sampling Rate: {GRID_STEP_S}s")
-    print(f"Calibration (Warmup) Period: {WARMUP_S}s")
-    print(f"Freeze baseline after warmup: {FREEZE_BASELINE_AFTER_WARMUP}")
-    print(f"Min sched events for baseline sample: {MIN_SCHED_CNT_FOR_BASELINE}")
-    print("Energy: mean(|ΔF|) over adaptive window W in "
-          f"[{energy_calc.w_min},{energy_calc.w_max}], vol EMA alpha={energy_calc.alpha}")
     print(f"Output: {OUT_CSV}")
     print("Press Ctrl+C to stop.\n")
 
-    t0 = time.time()
     next_t = time.monotonic()
 
     try:
@@ -290,84 +395,33 @@ def main():
                 b["stats"].clear()
                 b["sched_lat_hist"].clear()
 
-            # --- Feature vector ---
-            dstate_avg_ms = (dstate_total_ms / max(dstate_cnt, 1)) if dstate_total_ms > 0 else 0.0
-            softirq_avg_ms = (softirq_total_ms / max(softirq_cnt, 1)) if softirq_total_ms > 0 else 0.0
-
-            x_t = np.array([
-                sched_p99_ms,
-                sched_avg_ms,
-                dstate_avg_ms,
-                softirq_avg_ms,
-            ], dtype=float)
-
-            accept_baseline = np.all(np.isfinite(x_t)) and (sched_cnt >= MIN_SCHED_CNT_FOR_BASELINE)
-
-            elapsed_s = time.time() - t0
-            in_warmup = elapsed_s < WARMUP_S
-
-            baseline_mode = "CALIBRATING" if (in_warmup and baseline_X is None) else "FROZEN"
-
-            if baseline_X is None:
-                if accept_baseline:
-                    baseline_feat_b.append(x_t)
-
-                friction = float("nan")
-                direction = float("nan")
-
-                if (not in_warmup) and FREEZE_BASELINE_AFTER_WARMUP:
-                    if len(baseline_feat_b) >= max(MAHAL_MIN_SAMPLES, x_t.shape[0] + 2):
-                        baseline_X = np.array(baseline_feat_b, dtype=float)
-                        baseline_mode = "FROZEN"
-                        print(f"[BASELINE] Frozen with {baseline_X.shape[0]} samples at t={int(elapsed_s)}s")
-                    else:
-                        baseline_mode = "CALIBRATING"
-            else:
-                friction, _ = mahalanobis_distance_and_direction(x_t, baseline_X)
-
-                if Fcal is None and len(calib_fric_b) >= fcal_min_samples:
-                    Fcal = float(np.mean(calib_fric_b))
-                    print(f"[CALIB] Friction baseline mean Fcal = {Fcal:.6f}")
-
-                if Fcal is not None and np.isfinite(friction):
-                    if friction > Fcal:
-                        direction = 1.0
-                    elif friction < Fcal:
-                        direction = -1.0
-                    else:
-                        direction = 0.0
-                else:
-                    direction = float("nan")
-
-            fric_b.append(float(friction))
-            dir_b.append(float(direction))
-            if np.isfinite(friction):
-                calib_fric_b.append(float(friction))
-
-            # --- dF/dt ---
-            if len(fric_b) >= 2 and np.isfinite(fric_b[-1]) and np.isfinite(fric_b[-2]):
-                dF_dt = (fric_b[-1] - fric_b[-2]) / WINDOW_SEC
-            else:
-                dF_dt = float("nan")
-            dfr_b.append(float(dF_dt))
-
-            # --- Adaptive Energy update ---
-            if (baseline_X is not None) and ENERGY_CALIBRATE_AFTER_FREEZE and (not energy_calc._calibrated):
-                if len(calib_fric_b) >= 20:
-                    arr = np.array(calib_fric_b, dtype=float)
-                    abs_d = np.abs(np.diff(arr))
-                    energy_calc.calibrate(abs_d)
-
-            energy, w = energy_calc.update(friction)
-            eng_b.append(float(energy) if np.isfinite(energy) else float("nan"))
-
             cpu_util = resource.cpu_util()
             psi = resource.psi()
 
+            stats_cg = {}
+            for k, v in b["stats_cg"].items():
+                stats_cg[int(k.value)] = {
+                    "sched_lat_cnt": int(v.sched_lat_cnt),
+                    "sched_lat_dropped": int(v.sched_lat_dropped),
+                    "sched_lat_us_sum": int(v.sched_lat_us_sum),
+                    "sched_lat_us_max": int(v.sched_lat_us_max),
+                    "dstate_us_sum": int(v.dstate_us_sum),
+                    "dstate_cnt": int(v.dstate_cnt),
+                    "softirq_us_sum": int(v.softirq_us_sum),
+                    "softirq_cnt": int(v.softirq_cnt),
+                }
+            b["stats_cg"].clear()
+
+            pod_map = cg_index.get()
+
             # --- CSV Output ---
             with open(OUT_CSV, "a", newline="") as f:
-                csv.writer(f).writerow([
+                writer = csv.writer(f)
+                writer.writerow([
+                    "node",
                     ts_str,
+                    "",
+                    "",
                     f"{sched_total_ms:.2f}", f"{sched_avg_ms:.4f}", f"{sched_p95_ms:.4f}",
                     f"{sched_p99_ms:.4f}", f"{sched_max_ms:.4f}",
                     sched_cnt, sched_dropped,
@@ -375,16 +429,44 @@ def main():
                     f"{softirq_total_ms:.2f}", softirq_cnt,
                     f"{cpu_util:.6f}" if cpu_util is not None else "",
                     f"{psi:.6f}" if psi is not None else "",
-                    baseline_mode,
-                    len(baseline_feat_b) if baseline_X is None else baseline_X.shape[0],
-                    f"{friction:.6f}" if np.isfinite(friction) else "",
-                    f"{direction:.1f}" if np.isfinite(direction) else "",
-                    f"{dF_dt:.6f}" if np.isfinite(dF_dt) else "",
-                    f"{energy:.6f}" if np.isfinite(energy) else "",
-                    int(w),
-                    f"{energy_calc.vol:.6f}",
-                    f"{energy_calc.k_factor:.6f}",
                 ])
+
+                for cgid, (pod_uid, cg_path) in sorted(pod_map.items(), key=lambda x: x[1][0]):
+                    v = stats_cg.get(cgid)
+                    if v:
+                        sched_cnt_p = v["sched_lat_cnt"]
+                        sched_dropped_p = v["sched_lat_dropped"]
+                        sched_total_ms_p = v["sched_lat_us_sum"] / 1000.0
+                        sched_max_ms_p = v["sched_lat_us_max"] / 1000.0
+                        sched_avg_ms_p = (sched_total_ms_p / sched_cnt_p) if sched_cnt_p else 0.0
+                        dstate_total_ms_p = v["dstate_us_sum"] / 1000.0
+                        dstate_cnt_p = v["dstate_cnt"]
+                        softirq_total_ms_p = v["softirq_us_sum"] / 1000.0
+                        softirq_cnt_p = v["softirq_cnt"]
+                    else:
+                        sched_cnt_p = sched_dropped_p = 0
+                        sched_total_ms_p = sched_avg_ms_p = sched_max_ms_p = 0.0
+                        dstate_total_ms_p = 0.0
+                        dstate_cnt_p = 0
+                        softirq_total_ms_p = 0.0
+                        softirq_cnt_p = 0
+
+                    cpu_p = cg_resource.cpu_util(cg_path)
+                    psi_p = cg_resource.psi(cg_path)
+
+                    writer.writerow([
+                        "pod",
+                        ts_str,
+                        pod_uid,
+                        cgid,
+                        f"{sched_total_ms_p:.2f}", f"{sched_avg_ms_p:.4f}", "",
+                        "", f"{sched_max_ms_p:.4f}",
+                        sched_cnt_p, sched_dropped_p,
+                        f"{dstate_total_ms_p:.2f}", dstate_cnt_p,
+                        f"{softirq_total_ms_p:.2f}", softirq_cnt_p,
+                        f"{cpu_p:.6f}" if cpu_p is not None else "",
+                        f"{psi_p:.6f}" if psi_p is not None else "",
+                    ])
 
     except KeyboardInterrupt:
         print("\nStopping. Outputs saved:")

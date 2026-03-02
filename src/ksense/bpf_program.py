@@ -19,10 +19,12 @@ struct val_t {
 };
 
 BPF_HASH(stats, u32, struct val_t);
+BPF_HASH(stats_cg, u64, struct val_t);
 
 BPF_HASH(ts_runnable, u32, u64);
 BPF_HASH(ts_dstate, u32, u64);
 BPF_HASH(ts_softirq, u32, u64);
+BPF_HASH(pid_to_cg, u32, u64);
 
 /*
  * Higher-resolution histogram:
@@ -71,8 +73,19 @@ TRACEPOINT_PROBE(sched, sched_wakeup) {
                 v->dstate_us_sum += delta_us;
                 v->dstate_cnt += 1;
             }
+
+            u64 *cgidp = pid_to_cg.lookup(&pid);
+            if (cgidp) {
+                struct val_t *vcg, zero_cg = {};
+                vcg = stats_cg.lookup_or_init(cgidp, &zero_cg);
+                if (vcg) {
+                    vcg->dstate_us_sum += delta_us;
+                    vcg->dstate_cnt += 1;
+                }
+            }
         }
         ts_dstate.delete(&pid);
+        pid_to_cg.delete(&pid);
     }
 
     ts_runnable.update(&pid, &now);
@@ -88,23 +101,33 @@ TRACEPOINT_PROBE(sched, sched_wakeup_new) {
 
 TRACEPOINT_PROBE(sched, sched_switch) {
     u32 prev_pid = args->prev_pid;
-    u32 next_pid = args->next_pid;
     u64 now = bpf_ktime_get_ns();
 
     if (args->prev_state == 0) {
         ts_runnable.update(&prev_pid, &now);
     }
 
-    u64 *tsp = ts_runnable.lookup(&next_pid);
+    if (args->prev_state & 2) {
+        ts_dstate.update(&prev_pid, &now);
+        u64 cgid_prev = bpf_get_current_cgroup_id();
+        pid_to_cg.update(&prev_pid, &cgid_prev);
+    }
+
+    return 0;
+}
+
+int kprobe__finish_task_switch(struct pt_regs *ctx, struct task_struct *prev) {
+    u64 now = bpf_ktime_get_ns();
+    u32 pid = (u32)bpf_get_current_pid_tgid();
+
+    u64 *tsp = ts_runnable.lookup(&pid);
     if (tsp) {
         struct val_t *v, zero = {};
         u32 k = 0;
         v = stats.lookup_or_init(&k, &zero);
-
         if (v) {
             if (now > *tsp) {
                 u64 delta_us = (now - *tsp) / 1000;
-
                 v->sched_lat_us_sum += delta_us;
                 v->sched_lat_cnt += 1;
                 if (delta_us > v->sched_lat_us_max) v->sched_lat_us_max = delta_us;
@@ -115,11 +138,21 @@ TRACEPOINT_PROBE(sched, sched_switch) {
                 v->sched_lat_dropped += 1;
             }
         }
-        ts_runnable.delete(&next_pid);
-    }
+        ts_runnable.delete(&pid);
 
-    if (args->prev_state & 2) {
-        ts_dstate.update(&prev_pid, &now);
+        u64 cgid = bpf_get_current_cgroup_id();
+        struct val_t *vcg, zero_cg = {};
+        vcg = stats_cg.lookup_or_init(&cgid, &zero_cg);
+        if (vcg) {
+            if (now > *tsp) {
+                u64 delta_us = (now - *tsp) / 1000;
+                vcg->sched_lat_us_sum += delta_us;
+                vcg->sched_lat_cnt += 1;
+                if (delta_us > vcg->sched_lat_us_max) vcg->sched_lat_us_max = delta_us;
+            } else {
+                vcg->sched_lat_dropped += 1;
+            }
+        }
     }
 
     return 0;
@@ -147,6 +180,14 @@ TRACEPOINT_PROBE(irq, softirq_exit) {
             if (v) {
                 v->softirq_us_sum += delta_us;
                 v->softirq_cnt += 1;
+            }
+
+            u64 cgid = bpf_get_current_cgroup_id();
+            struct val_t *vcg, zero_cg = {};
+            vcg = stats_cg.lookup_or_init(&cgid, &zero_cg);
+            if (vcg) {
+                vcg->softirq_us_sum += delta_us;
+                vcg->softirq_cnt += 1;
             }
         }
         ts_softirq.delete(&cpu);
