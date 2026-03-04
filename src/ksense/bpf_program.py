@@ -116,7 +116,7 @@ TRACEPOINT_PROBE(sched, sched_switch) {
     return 0;
 }
 
-int kprobe__finish_task_switch(struct pt_regs *ctx, struct task_struct *prev) {
+int trace_finish_task_switch(struct pt_regs *ctx, struct task_struct *prev) {
     u64 now = bpf_ktime_get_ns();
     u32 pid = (u32)bpf_get_current_pid_tgid();
 

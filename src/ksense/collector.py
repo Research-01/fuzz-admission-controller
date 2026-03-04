@@ -4,7 +4,7 @@ import re
 import socket
 import time
 from datetime import datetime
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import ctypes as ct
 from bcc import BPF
@@ -428,6 +428,10 @@ _REQUIRED_TRACEPOINTS = [
     ("sched", "sched_process_exit"),
 ]
 
+_FINISH_TASK_SWITCH_KPROBE_FN = "trace_finish_task_switch"
+_FINISH_TASK_SWITCH_BASE = "finish_task_switch"
+_FINISH_TASK_SWITCH_PREFIX = "finish_task_switch."
+
 
 def _has_tracepoint_format(category: str, event: str) -> bool:
     for p in (
@@ -437,6 +441,56 @@ def _has_tracepoint_format(category: str, event: str) -> bool:
         if os.path.exists(p) and os.access(p, os.R_OK):
             return True
     return False
+
+
+def _discover_finish_task_switch_symbols() -> List[str]:
+    """
+    Discover candidate symbol names for finish_task_switch from /proc/kallsyms.
+    Handles kernels where the symbol is compiled as an inlined/ISRA variant.
+    """
+    symbols: List[str] = []
+    try:
+        with open("/proc/kallsyms", "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) < 3:
+                    continue
+                sym = parts[2]
+                if sym == _FINISH_TASK_SWITCH_BASE or sym.startswith(_FINISH_TASK_SWITCH_PREFIX):
+                    symbols.append(sym)
+    except OSError:
+        return []
+
+    out: List[str] = []
+    seen = set()
+    for sym in symbols:
+        if sym in seen:
+            continue
+        seen.add(sym)
+        out.append(sym)
+    return out
+
+
+def _attach_finish_task_switch_kprobe(bpf: BPF) -> Optional[str]:
+    """
+    Attach runnable-latency probe to the best available finish_task_switch symbol.
+    Returns attached symbol name, or None when no attach succeeded.
+    """
+    candidates: List[str] = [
+        _FINISH_TASK_SWITCH_BASE,
+        f"{_FINISH_TASK_SWITCH_BASE}.isra.0",
+    ]
+    for sym in _discover_finish_task_switch_symbols():
+        if sym not in candidates:
+            candidates.append(sym)
+
+    for sym in candidates:
+        try:
+            bpf.attach_kprobe(event=sym, fn_name=_FINISH_TASK_SWITCH_KPROBE_FN)
+            return sym
+        except Exception:
+            continue
+    return None
 
 
 def _preflight_or_die() -> None:
@@ -507,6 +561,14 @@ def main():
     _ensure_or_rotate_csv(OUT_CSV, headers)
 
     b = BPF(text=bpf_program.bpf_text, cflags=["-Wno-macro-redefined"])
+    attached_sym = _attach_finish_task_switch_kprobe(b)
+    if attached_sym:
+        print(f"[INFO] Attached kprobe for sched latency: {attached_sym}")
+    else:
+        print(
+            "[WARN] Could not attach finish_task_switch kprobe; "
+            "SchedLat_* metrics may stay at 0 on this kernel."
+        )
 
     resource = ResourceSampler()
     cg_index = CgroupIndex()
