@@ -13,28 +13,17 @@ too high, the pod stays Pending.
 If you only want kernel metrics + derived friction/energy + CPU/PSI in **one CSV**
 directly on a node, run the collector from your terminal:
 
-1) Install system deps (Ubuntu example):
-
 ```bash
-sudo apt-get update
-sudo apt-get install -y bpfcc-tools python3-bpfcc python3-pip linux-headers-$(uname -r)
-```
+cd ~/fuzz-admission-controller
 
-2) Install Python deps:
+# install deps for root python (important)
+sudo -H python3 -m pip install --break-system-packages -r requirements.collector.txt
 
-```bash
-python3 -m pip install -r requirements.collector.txt
-```
+# verify root python can import kubernetes
+sudo python3 -c "import kubernetes; print(kubernetes.__version__)"
 
-3) Run (needs root/privileges for eBPF):
-
-```bash
-sudo mount -t tracefs nodev /sys/kernel/tracing 2>/dev/null || true
-sudo mount -t debugfs none /sys/kernel/debug 2>/dev/null || true
-
-sudo -E KSENSE_METRICS_CSV=/tmp/ksense/kernel_metrics.csv python3 collector_only.py
-```
-
+# run with kubeconfig visible to sudo process
+sudo KUBECONFIG=/home/ubuntu/.kube/config python3 collector_only.py
 Output file (single CSV):
 - `/tmp/ksense/kernel_metrics.csv` (override with `KSENSE_METRICS_CSV`)
 
