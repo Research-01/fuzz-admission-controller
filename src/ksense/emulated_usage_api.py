@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 import csv
 import glob
-import json
 import os
 import threading
 import time
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict, List, Optional
 
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import PlainTextResponse
 
 USAGE_FIELDS = [
     "timestamp",
@@ -115,36 +116,21 @@ class HotelPlayback:
         return sum(len(s) for s in self._streams)
 
 
-def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: Dict[str, object]) -> None:
-    body = json.dumps(payload).encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type", "application/json")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
+def _create_app(playback: HotelPlayback) -> FastAPI:
+    app = FastAPI(title="ksense-emulated-usage-api")
 
+    @app.get("/healthz", response_class=PlainTextResponse)
+    def healthz() -> str:
+        return "ok\n"
 
-class UsageHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path.startswith("/healthz"):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            self.wfile.write(b"ok\n")
-            return
+    @app.get("/usage/latest")
+    def usage_latest() -> Dict[str, object]:
+        latest = playback.latest()
+        if latest is None:
+            raise HTTPException(status_code=503, detail="no usage data loaded")
+        return latest
 
-        if self.path.startswith("/usage/latest"):
-            latest = self.server.playback.latest()
-            if latest is None:
-                _json_response(self, 503, {"error": "no usage data loaded"})
-                return
-            _json_response(self, 200, latest)
-            return
-
-        _json_response(self, 404, {"error": "not found"})
-
-    def log_message(self, format, *args):
-        return
+    return app
 
 
 def _default_hotel_csvs() -> List[str]:
@@ -176,11 +162,10 @@ def run_server(host: str = "127.0.0.1", port: int = 8090) -> None:
 
     threading.Thread(target=_loop, daemon=True).start()
 
-    httpd = ThreadingHTTPServer((host, port), UsageHandler)
-    httpd.playback = playback
-
     print(f"[emulated-usage-api] listening on http://{host}:{port}")
     print(f"[emulated-usage-api] source CSVs: {csv_paths}")
     print(f"[emulated-usage-api] tick interval: {tick_s}s")
     print(f"[emulated-usage-api] loaded rows: {playback.size}")
-    httpd.serve_forever()
+
+    app = _create_app(playback=playback)
+    uvicorn.run(app, host=host, port=port, log_level="info")

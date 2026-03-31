@@ -91,6 +91,7 @@ This API exposes how much capacity can be safely sold, based on:
 - Last 5 minutes of emulated usage history (`hotel*.csv` by default)
 - A lightweight ARIMA-style forecast for CPU/PSI/RAM/storage usage
 - Current fuzzy controller output (friction + energy + fuzzy score)
+- FastAPI HTTP endpoints
 
 Run locally:
 

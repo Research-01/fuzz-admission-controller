@@ -11,8 +11,11 @@ import urllib.request
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Dict, List, Optional
+
+import uvicorn
+from fastapi import Body, FastAPI
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .fuzzy_controller import FuzzyConfig, FuzzyController
 
@@ -1044,75 +1047,42 @@ def _default_usage_csvs() -> List[str]:
     return [fallback] if fallback else []
 
 
-def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: Dict[str, object]) -> None:
-    body = json.dumps(payload).encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type", "application/json")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
+def _create_app(engine: ResourceOfferEngine) -> FastAPI:
+    app = FastAPI(title="ksense-resource-offer-api")
 
+    @app.get("/healthz", response_class=PlainTextResponse)
+    def healthz() -> str:
+        return "ok\n"
 
-class ResourceOfferHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path.startswith("/healthz"):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            self.wfile.write(b"ok\n")
-            return
+    @app.get("/resource_offer_debug")
+    def resource_offer_debug() -> Dict[str, object]:
+        return engine.get_latest_snapshot()
 
-        if self.path.startswith("/resource_offer_debug"):
-            snapshot = self.server.engine.get_latest_snapshot()
-            _json_response(self, 200, snapshot)
-            return
+    @app.get("/resource_offer_now")
+    def resource_offer_now() -> Dict[str, object]:
+        return engine.refresh_once()
 
-        if self.path.startswith("/resource_offer_now"):
-            snapshot = self.server.engine.refresh_once()
-            _json_response(self, 200, snapshot)
-            return
+    @app.get("/resource_offer")
+    def resource_offer() -> Dict[str, float]:
+        return engine.compute_offer()
 
-        if self.path.startswith("/resource_offer"):
-            offer = self.server.engine.compute_offer()
-            _json_response(self, 200, offer)
-            return
+    @app.get("/reservations")
+    def reservations() -> Dict[str, object]:
+        return engine.list_reservations()
 
-        if self.path.startswith("/reservations"):
-            _json_response(self, 200, self.server.engine.list_reservations())
-            return
-
-        _json_response(self, 404, {"error": "not found"})
-
-    def do_POST(self):
-        if not self.path.startswith("/reserve"):
-            _json_response(self, 404, {"error": "not found"})
-            return
-
-        try:
-            size = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            size = 0
-        raw = self.rfile.read(size) if size > 0 else b"{}"
-        try:
-            payload = json.loads(raw.decode("utf-8"))
-            if not isinstance(payload, dict):
-                raise ValueError("payload must be object")
-        except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
-            _json_response(self, 400, {"accepted": False, "error": "invalid JSON payload"})
-            return
-
+    @app.post("/reserve")
+    def reserve(payload: Dict[str, object] = Body(default_factory=dict)):
         cpu = _to_float(payload.get("cpu")) or 0.0
         ram = _to_float(payload.get("ram")) or 0.0
         storage = _to_float(payload.get("storage")) or 0.0
         ttl_s = _to_float(payload.get("ttl_s"))
         owner = str(payload.get("owner") or "").strip()
 
-        result = self.server.engine.reserve(cpu=cpu, ram=ram, storage=storage, ttl_s=ttl_s, owner=owner)
+        result = engine.reserve(cpu=cpu, ram=ram, storage=storage, ttl_s=ttl_s, owner=owner)
         status = 201 if result.get("accepted") else 409
-        _json_response(self, status, result)
+        return JSONResponse(status_code=status, content=result)
 
-    def log_message(self, format, *args):
-        return
+    return app
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
@@ -1231,9 +1201,6 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
         threading.Thread(target=_usage_api_loop, daemon=True).start()
     threading.Thread(target=_offer_loop, daemon=True).start()
 
-    httpd = ThreadingHTTPServer((host, port), ResourceOfferHandler)
-    httpd.engine = engine
-
     print(f"[resource-offer] listening on http://{host}:{port}")
     print(f"[resource-offer] usage CSVs: {usage_csvs}")
     if usage_mirror is not None:
@@ -1246,4 +1213,6 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
         print(f"[resource-offer] controller replay rows: {controller_replay.size}")
     print(f"[resource-offer] output CSV: {offer_csv_path}")
     print(f"[resource-offer] refresh interval: {refresh_s}s")
-    httpd.serve_forever()
+
+    app = _create_app(engine=engine)
+    uvicorn.run(app, host=host, port=port, log_level="info")
