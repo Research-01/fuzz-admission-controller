@@ -20,9 +20,9 @@ This single file creates:
 - service `ksense-resource-offer-api` on port `8080`
 
 Important:
-- `MZ_CONTROLLER_REPLAY=false` is set for production so fuzzy reads live controller CSV.
-- `MZ_CONTROLLER_CSV=/var/run/ksense/kernel_metrics.csv` expects a continuously updated file.
-- The deployment mounts host path `/tmp/ksense` to `/var/run/ksense` (read-only).
+- `MZ_CONTROLLER_FROM_USAGE_ENABLED=true` generates controller metrics from usage API stream.
+- `MZ_CONTROLLER_CSV=/tmp/ksense/kernel_metrics.csv` is written and read in the same pod.
+- `MZ_CONTROLLER_REPLAY=false` ensures live CSV path is used (no replay).
 
 ### Access the sellable resources API
 

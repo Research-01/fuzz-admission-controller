@@ -17,6 +17,8 @@ import uvicorn
 from fastapi import Body, FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from .energy import AdaptiveVolatilityEnergy
+from .friction import mahalanobis_distance_and_direction
 from .fuzzy_controller import FuzzyConfig, FuzzyController
 
 
@@ -410,6 +412,180 @@ class UsageApiMirror:
             return dict(self._latest_payload)
 
 
+class ApiControllerMetricsWriter:
+    """
+    Builds controller metrics (friction/energy/direction/cpu/psi) from usage API samples
+    and appends them to kernel_metrics.csv for fuzzy controller consumption.
+    """
+
+    _CSV_HEADER = [
+        "Time",
+        "SchedLat_Total_ms",
+        "SchedLat_Avg_ms",
+        "SchedLat_P95_ms",
+        "SchedLat_P99_ms",
+        "SchedLat_Max_ms",
+        "SchedLat_Count",
+        "SchedLat_Dropped",
+        "DState_Total_ms",
+        "DState_Count",
+        "SoftIRQ_Total_ms",
+        "SoftIRQ_Count",
+        "CPUUtil",
+        "PSI",
+        "BaselineMode",
+        "BaselineSamples",
+        "Friction",
+        "Direction",
+        "dF_dt",
+        "Energy",
+        "Energy_W",
+        "Energy_Vol",
+        "Energy_kFactor",
+    ]
+
+    def __init__(self, out_csv: str, baseline_samples: int = 20):
+        self.out_csv = out_csv
+        self.baseline_samples = max(8, int(baseline_samples))
+        self._lock = threading.Lock()
+        self._baseline_buf: deque = deque(maxlen=self.baseline_samples)
+        self._baseline_frozen: Optional[List[List[float]]] = None
+        self._energy = AdaptiveVolatilityEnergy()
+        self._last_friction: Optional[float] = None
+        self._last_ts: Optional[datetime] = None
+        self._latest: Optional[Dict[str, float]] = None
+        self._ensure_csv()
+
+    def _ensure_csv(self) -> None:
+        out_dir = os.path.dirname(self.out_csv)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        if os.path.exists(self.out_csv):
+            return
+        with open(self.out_csv, "w", encoding="utf-8", newline="") as f:
+            f.write(",".join(self._CSV_HEADER) + "\n")
+
+    def observe_sample(self, sample: UsageSample) -> None:
+        if sample is None:
+            return
+
+        sched_total_ms = float(sample.sched_ms or 0.0)
+        dstate_total_ms = float(sample.dstate_ms or 0.0)
+        softirq_total_ms = float(sample.softirq_ms or 0.0)
+        cpu_util = float(sample.cpu_pct or 0.0)
+        psi = float(sample.psi_pct or 0.0)
+
+        x_t = [
+            sched_total_ms,
+            sched_total_ms,  # sched_avg proxy
+            dstate_total_ms,
+            softirq_total_ms,
+        ]
+
+        with self._lock:
+            if self._baseline_frozen is None:
+                self._baseline_buf.append(list(x_t))
+                if len(self._baseline_buf) >= self.baseline_samples:
+                    self._baseline_frozen = list(self._baseline_buf)
+
+            if self._baseline_frozen is None:
+                friction = 0.0
+                direction = 1.0
+                baseline_mode = "CALIBRATING"
+                baseline_samples = len(self._baseline_buf)
+            else:
+                fr, dr = mahalanobis_distance_and_direction(x_t, self._baseline_frozen)
+                friction = float(fr if math.isfinite(fr) else 0.0)
+                direction = float(dr if math.isfinite(dr) else 1.0)
+                baseline_mode = "FROZEN"
+                baseline_samples = len(self._baseline_frozen)
+
+            if self._last_friction is not None and self._last_ts is not None:
+                dt = max(1e-6, (sample.ts - self._last_ts).total_seconds())
+                d_f_dt = (friction - self._last_friction) / dt
+            else:
+                d_f_dt = 0.0
+
+            energy, w = self._energy.update(friction)
+            if not math.isfinite(energy):
+                energy = 0.0
+
+            self._last_friction = friction
+            self._last_ts = sample.ts
+            self._latest = {
+                "sched_total_ms": sched_total_ms,
+                "dstate_total_ms": dstate_total_ms,
+                "softirq_total_ms": softirq_total_ms,
+                "cpu_util": cpu_util,
+                "psi": psi,
+                "baseline_mode": baseline_mode,
+                "baseline_samples": float(baseline_samples),
+                "friction": friction,
+                "direction": direction,
+                "d_f_dt": d_f_dt,
+                "energy": float(energy),
+                "energy_w": float(w),
+                "energy_vol": float(self._energy.vol),
+                "energy_k": float(self._energy.k_factor),
+                "source_ts": sample.ts.timestamp(),
+            }
+
+    def write_latest_row(self, now_dt: datetime) -> bool:
+        with self._lock:
+            latest = dict(self._latest) if self._latest is not None else None
+        if latest is None:
+            return False
+
+        ts_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+        sched_total_ms = latest["sched_total_ms"]
+        dstate_total_ms = latest["dstate_total_ms"]
+        softirq_total_ms = latest["softirq_total_ms"]
+        cpu_util = latest["cpu_util"]
+        psi = latest["psi"]
+        baseline_mode = latest["baseline_mode"]
+        baseline_samples = int(latest["baseline_samples"])
+        friction = latest["friction"]
+        direction = latest["direction"]
+        d_f_dt = latest["d_f_dt"]
+        energy = latest["energy"]
+        energy_w = int(latest["energy_w"])
+        energy_vol = latest["energy_vol"]
+        energy_k = latest["energy_k"]
+
+        with open(self.out_csv, "a", encoding="utf-8", newline="") as f:
+            f.write(
+                ",".join(
+                    [
+                        ts_str,
+                        f"{sched_total_ms:.2f}",
+                        f"{sched_total_ms:.4f}",
+                        f"{sched_total_ms:.4f}",
+                        f"{sched_total_ms:.4f}",
+                        f"{sched_total_ms:.4f}",
+                        "1",
+                        "0",
+                        f"{dstate_total_ms:.2f}",
+                        "1",
+                        f"{softirq_total_ms:.2f}",
+                        "1",
+                        f"{cpu_util:.6f}",
+                        f"{psi:.6f}",
+                        baseline_mode,
+                        str(baseline_samples),
+                        f"{friction:.6f}",
+                        f"{direction:.1f}",
+                        f"{d_f_dt:.6f}",
+                        f"{energy:.6f}",
+                        str(energy_w),
+                        f"{energy_vol:.6f}",
+                        f"{energy_k:.6f}",
+                    ]
+                )
+                + "\n"
+            )
+        return True
+
+
 class ResourceOfferEngine:
     def __init__(
         self,
@@ -419,6 +595,7 @@ class ResourceOfferEngine:
         offer_csv_path: str,
         controller_replay: Optional[ControllerMetricsReplay] = None,
         get_current_usage: Optional[Callable[[], Optional[Dict[str, object]]]] = None,
+        controller_writer: Optional[ApiControllerMetricsWriter] = None,
     ):
         self.controller = controller
         self.history = history
@@ -426,6 +603,7 @@ class ResourceOfferEngine:
         self.offer_csv_path = offer_csv_path
         self.controller_replay = controller_replay
         self.get_current_usage = get_current_usage
+        self.controller_writer = controller_writer
         self._lock = threading.Lock()
         self._latest_snapshot: Optional[Dict[str, object]] = None
         self._reservations: List[Dict[str, object]] = []
@@ -645,6 +823,14 @@ class ResourceOfferEngine:
             "cpu_usage_pct": latest_sample.cpu_pct if latest_sample is not None else None,
             "cpu_psi_some_pct": latest_sample.psi_pct if latest_sample is not None else None,
         }
+
+        if self.controller_writer is not None and latest_sample is not None:
+            try:
+                self.controller_writer.observe_sample(latest_sample)
+                # Persist computed controller metrics once per decision tick.
+                self.controller_writer.write_latest_row(datetime.now())
+            except Exception:
+                pass
 
         with self._lock:
             if self._reservations_enabled:
@@ -1104,6 +1290,8 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
 
     controller_csv = os.getenv("MZ_CONTROLLER_CSV", "").strip() or _default_controller_csv()
     replay_mode = os.getenv("MZ_CONTROLLER_REPLAY", "auto").strip().lower()
+    controller_from_usage = os.getenv("MZ_CONTROLLER_FROM_USAGE_ENABLED", "true").strip().lower() == "true"
+    controller_writer_baseline_samples = int(os.getenv("MZ_CONTROLLER_BASELINE_SAMPLES", "20"))
 
     window_s = int(os.getenv("MZ_PREDICT_WINDOW_S", "300"))
     max_rows_per_file = int(os.getenv("MZ_USAGE_MAX_ROWS", "20000"))
@@ -1128,8 +1316,17 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
     elif replay_mode in ("0", "false", "no", "off"):
         replay_enabled = False
     else:
-        # Auto mode: for emulated usage-api flow, replay controller CSV rows over time.
-        replay_enabled = bool(usage_api_url)
+        # Auto mode:
+        # - If usage API is enabled and controller-from-usage writer is enabled, do not replay.
+        # - Otherwise preserve old behavior (replay for emulated usage-api flows).
+        replay_enabled = bool(usage_api_url) and (not controller_from_usage)
+
+    controller_writer: Optional[ApiControllerMetricsWriter] = None
+    if usage_api_url and controller_from_usage:
+        controller_writer = ApiControllerMetricsWriter(
+            out_csv=controller_csv,
+            baseline_samples=controller_writer_baseline_samples,
+        )
 
     if replay_enabled:
         replay_loop = os.getenv("MZ_CONTROLLER_REPLAY_LOOP", "true").strip().lower() == "true"
@@ -1144,6 +1341,7 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
         offer_csv_path=offer_csv_path,
         controller_replay=controller_replay,
         get_current_usage=usage_mirror.latest if usage_mirror is not None else None,
+        controller_writer=controller_writer,
     )
 
     if replay_enabled and controller_replay is not None and controller_replay.size > 0:
@@ -1175,6 +1373,11 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
                 time.sleep(sleep_s)
             try:
                 changed = usage_mirror.poll_once()
+                if changed and controller_writer is not None:
+                    payload = usage_mirror.latest()
+                    sample = engine._usage_payload_to_sample(payload)
+                    if sample is not None:
+                        controller_writer.observe_sample(sample)
                 if changed and controller_replay is not None:
                     controller_replay.step()
             except Exception:
@@ -1209,6 +1412,7 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
         print(f"[resource-offer] mirrored usage CSV: {usage_api_csv}")
     print(f"[resource-offer] controller CSV: {controller_csv}")
     print(f"[resource-offer] controller replay mode: {replay_mode}")
+    print(f"[resource-offer] controller-from-usage writer: {'enabled' if controller_writer is not None else 'disabled'}")
     if controller_replay is not None:
         print(f"[resource-offer] controller replay rows: {controller_replay.size}")
     print(f"[resource-offer] output CSV: {offer_csv_path}")

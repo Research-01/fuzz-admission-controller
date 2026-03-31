@@ -1,0 +1,25 @@
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    APP_MODE=resource-offer
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-resource-offer.txt /app/requirements-resource-offer.txt
+RUN pip install --no-cache-dir -r /app/requirements-resource-offer.txt
+
+COPY src /app/src
+COPY resource_offer_api.py /app/resource_offer_api.py
+COPY emulated_usage_api.py /app/emulated_usage_api.py
+COPY docker/entrypoint-resource-offer.sh /app/entrypoint.sh
+
+RUN chmod +x /app/entrypoint.sh
+
+EXPOSE 8080 8090
+
+ENTRYPOINT ["/app/entrypoint.sh"]

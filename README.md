@@ -183,6 +183,7 @@ Other useful env vars:
 - `MZ_USAGE_API_POLL_S` (default `5`)
 - `MZ_USAGE_API_CSV` (default `/tmp/ksense/usage_api_metrics.csv`)
 - `MZ_CONTROLLER_CSV` (controller input CSV; default `kernel_metrics.csv` if present)
+- `MZ_CONTROLLER_FROM_USAGE_ENABLED` (default `true` when usage API is configured; computes and writes controller metrics CSV from API samples)
 - `MZ_PREDICT_WINDOW_S` (default `300`)
 - `MZ_RESOURCE_OFFER_CSV` (default `/tmp/ksense/resource_offer.csv`)
 - `MZ_OFFER_REFRESH_S` (default `40`)

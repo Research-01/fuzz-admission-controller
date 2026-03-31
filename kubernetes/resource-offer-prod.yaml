@@ -33,10 +33,13 @@ spec:
               value: "5"
             - name: MZ_USAGE_API_CSV
               value: /tmp/ksense/usage_api_metrics.csv
-            # Live fuzzy/controller inputs (must be updated continuously by collector).
+            # Controller metrics CSV generated from usage API stream inside this pod.
             - name: MZ_CONTROLLER_CSV
-              value: /var/run/ksense/kernel_metrics.csv
-            # Force live CSV reads; do not use replay mode in production.
+              value: /tmp/ksense/kernel_metrics.csv
+            # Generate friction/energy/direction from usage API and write kernel_metrics.csv.
+            - name: MZ_CONTROLLER_FROM_USAGE_ENABLED
+              value: "true"
+            # Force CSV live path; do not use replay mode.
             - name: MZ_CONTROLLER_REPLAY
               value: "false"
             - name: MZ_OFFER_REFRESH_S
@@ -51,16 +54,9 @@ spec:
           volumeMounts:
             - name: ksense-tmp
               mountPath: /tmp/ksense
-            - name: controller-metrics
-              mountPath: /var/run/ksense
-              readOnly: true
       volumes:
         - name: ksense-tmp
           emptyDir: {}
-        - name: controller-metrics
-          hostPath:
-            path: /tmp/ksense
-            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service
