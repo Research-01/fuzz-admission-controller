@@ -108,6 +108,49 @@ def _round_or_none(value: Optional[float], digits: int) -> Optional[float]:
     return round(float(value), digits)
 
 
+def _csv_path_writable(path: str) -> bool:
+    parent = os.path.dirname(path) or "."
+    try:
+        os.makedirs(parent, exist_ok=True)
+    except OSError:
+        return False
+
+    # If the target exists, verify append permissions directly.
+    if os.path.exists(path):
+        try:
+            with open(path, "a", encoding="utf-8"):
+                pass
+            return True
+        except OSError:
+            return False
+
+    # Otherwise, verify directory writability via a probe file.
+    probe = os.path.join(parent, f".ksense_write_probe_{os.getpid()}_{time.time_ns()}")
+    try:
+        with open(probe, "w", encoding="utf-8"):
+            pass
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
+def _resolve_writable_csv_path(path: str, label: str, fallback_dir: str = "/tmp/ksense") -> str:
+    requested = (path or "").strip()
+    if not requested:
+        requested = os.path.join(fallback_dir, f"{label}.csv")
+
+    if _csv_path_writable(requested):
+        return requested
+
+    fallback = os.path.join(fallback_dir, os.path.basename(requested) or f"{label}.csv")
+    if _csv_path_writable(fallback):
+        print(f"[resource-offer] warning: {label} path not writable: {requested}; using {fallback}")
+        return fallback
+
+    raise OSError(f"{label} CSV path is not writable: {requested}; fallback also not writable: {fallback}")
+
+
 # Lightweight ARIMA(1,1,0)-style forecast on differenced series.
 def _forecast_arima_like(values: List[float]) -> Optional[float]:
     if not values:
@@ -1275,6 +1318,7 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
     usage_api_url = os.getenv("MZ_USAGE_API_URL", "").strip()
     usage_api_poll_s = float(os.getenv("MZ_USAGE_API_POLL_S", "5"))
     usage_api_csv = os.getenv("MZ_USAGE_API_CSV", "/tmp/ksense/usage_api_metrics.csv").strip()
+    usage_api_csv = _resolve_writable_csv_path(usage_api_csv, label="usage_api")
 
     usage_mirror = None
     if usage_api_url:
@@ -1292,10 +1336,13 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
     replay_mode = os.getenv("MZ_CONTROLLER_REPLAY", "auto").strip().lower()
     controller_from_usage = os.getenv("MZ_CONTROLLER_FROM_USAGE_ENABLED", "true").strip().lower() == "true"
     controller_writer_baseline_samples = int(os.getenv("MZ_CONTROLLER_BASELINE_SAMPLES", "20"))
+    if usage_api_url and controller_from_usage:
+        controller_csv = _resolve_writable_csv_path(controller_csv, label="controller")
 
     window_s = int(os.getenv("MZ_PREDICT_WINDOW_S", "300"))
     max_rows_per_file = int(os.getenv("MZ_USAGE_MAX_ROWS", "20000"))
     offer_csv_path = os.getenv("MZ_RESOURCE_OFFER_CSV", "/tmp/ksense/resource_offer.csv")
+    offer_csv_path = _resolve_writable_csv_path(offer_csv_path, label="resource_offer")
     refresh_s = float(os.getenv("MZ_OFFER_REFRESH_S", "40"))
 
     capacity = NodeCapacity()
