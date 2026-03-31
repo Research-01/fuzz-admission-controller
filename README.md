@@ -32,7 +32,7 @@ This single image runs both APIs:
 Recommended image name:
 
 ```bash
-export IMAGE=abdullahmuzlim279/ksense-resource-offer-stack:rwfix-20260331
+export IMAGE=abdullahmuzlim279/ksense-resource-offer-stack:latest
 docker build -f Dockerfile.resource-offer -t "$IMAGE" .
 docker login -u abdullahmuzlim279
 docker push "$IMAGE"

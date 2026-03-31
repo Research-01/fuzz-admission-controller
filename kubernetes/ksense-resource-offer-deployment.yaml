@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: resource-offer-api
-          image: abdullahmuzlim279/ksense-resource-offer-stack:rwfix-20260331
+          image: abdullahmuzlim279/ksense-resource-offer-stack:latest
           imagePullPolicy: Always
           env:
             - name: APP_MODE
