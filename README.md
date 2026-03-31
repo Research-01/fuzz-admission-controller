@@ -241,6 +241,17 @@ kubectl -n ksense exec "$POD" -- tail -n 5 /tmp/ksense/usage_api_metrics.csv
 kubectl -n ksense exec "$POD" -- tail -n 5 /tmp/ksense/resource_offer.csv
 ```
 
+### Kubernetes production deployment (no emulated CSV/ConfigMap)
+
+Use this when usage data comes from your real API endpoint:
+
+```bash
+kubectl apply -f kubernetes/resource-offer-prod.yaml
+kubectl -n ksense rollout status deploy/ksense-resource-offer-api
+```
+
+Before applying, edit `MZ_USAGE_API_URL` in `kubernetes/resource-offer-prod.yaml`.
+
 ### Analyze accept/reject behavior (runtime)
 
 `/resource_offer` serves the latest cached offer (refresh default 40s), so repeated calls

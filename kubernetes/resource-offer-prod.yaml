@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ksense-resource-offer-api
+  namespace: ksense
+  labels:
+    app: ksense-resource-offer-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ksense-resource-offer-api
+  template:
+    metadata:
+      labels:
+        app: ksense-resource-offer-api
+    spec:
+      containers:
+        - name: resource-offer-api
+          image: abdullahmuzlim279/ksense-resource-offer-stack:latest
+          imagePullPolicy: Always
+          env:
+            - name: APP_MODE
+              value: "resource-offer"
+            - name: RESOURCE_OFFER_HOST
+              value: "0.0.0.0"
+            - name: RESOURCE_OFFER_PORT
+              value: "8080"
+            # Set this to your real usage API endpoint.
+            - name: MZ_USAGE_API_URL
+              value: "http://your-real-usage-api.ksense.svc:8090/usage/latest"
+            - name: MZ_USAGE_API_POLL_S
+              value: "5"
+            - name: MZ_USAGE_API_CSV
+              value: /tmp/ksense/usage_api_metrics.csv
+            # Keep this path only if your controller metrics CSV is available in-container.
+            - name: MZ_CONTROLLER_CSV
+              value: /tmp/ksense/kernel_metrics.csv
+            - name: MZ_OFFER_REFRESH_S
+              value: "40"
+            - name: MZ_PREDICT_WINDOW_S
+              value: "300"
+            - name: MZ_RESOURCE_OFFER_CSV
+              value: /tmp/ksense/resource_offer.csv
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: ksense-tmp
+              mountPath: /tmp/ksense
+      volumes:
+        - name: ksense-tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ksense-resource-offer-api
+  namespace: ksense
+spec:
+  selector:
+    app: ksense-resource-offer-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
