@@ -64,20 +64,11 @@ docker run --rm --name ksense-offer \
   "$IMAGE"
 ```
 
-### Deploy to Kubernetes
+### Kubernetes docs
 
-```bash
-scripts/setup_webhook_tls.sh
-kubectl apply -k kubernetes/
-```
+Kubernetes deployment instructions are now in:
 
-Check status:
-
-```bash
-kubectl get ds -n <collector-namespace>
-kubectl get pods -n <collector-namespace> -o wide
-kubectl get deploy -n <collector-namespace>
-```
+`kubernetes/README.md`
 
 ### Use the custom scheduler
 
@@ -202,55 +193,12 @@ Emulated usage API env vars:
 - `MZ_EMULATED_USAGE_TICK_S` (default `5`)
 - `MZ_EMULATED_USAGE_LOOP` (default `true`)
 
-### Kubernetes smoke test for resource-offer path
+### Kubernetes
 
-This test runs fully in-cluster with two pods:
-- `ksense-emulated-usage-api` (replays hotel CSV every 5s)
-- `ksense-resource-offer-api` (mirrors usage API to local CSV and serves `/resource_offer`)
-- both deployments use `abdullahmuzlim279/ksense-resource-offer-stack:latest`
+For clear Kubernetes deployment steps (single-file production deployment,
+in-cluster service URL, and optional emulation smoke test), see:
 
-1) Load emulated CSVs into ConfigMap:
-
-```bash
-scripts/create_emulated_metrics_configmap.sh
-```
-
-2) Deploy test stack:
-
-```bash
-kubectl apply -f kubernetes/resource-offer-test-stack.yaml
-kubectl -n ksense rollout status deploy/ksense-emulated-usage-api
-kubectl -n ksense rollout status deploy/ksense-resource-offer-api
-```
-
-3) Run smoke job:
-
-```bash
-kubectl apply -f kubernetes/resource-offer-smoke-job.yaml
-kubectl -n ksense logs -l app=ksense-resource-offer-smoke --tail=200
-```
-
-4) Manual checks:
-
-```bash
-kubectl -n ksense run tmp-curl --rm -it --restart=Never --image=curlimages/curl:8.7.1 -- \
-  curl -fsS http://ksense-resource-offer-api:8080/resource_offer
-
-POD=$(kubectl -n ksense get pod -l app=ksense-resource-offer-api -o jsonpath='{.items[0].metadata.name}')
-kubectl -n ksense exec "$POD" -- tail -n 5 /tmp/ksense/usage_api_metrics.csv
-kubectl -n ksense exec "$POD" -- tail -n 5 /tmp/ksense/resource_offer.csv
-```
-
-### Kubernetes production deployment (no emulated CSV/ConfigMap)
-
-Use this when usage data comes from your real API endpoint:
-
-```bash
-kubectl apply -f kubernetes/resource-offer-prod.yaml
-kubectl -n ksense rollout status deploy/ksense-resource-offer-api
-```
-
-Before applying, edit `MZ_USAGE_API_URL` in `kubernetes/resource-offer-prod.yaml`.
+`kubernetes/README.md`
 
 ### Analyze accept/reject behavior (runtime)
 
@@ -267,18 +215,6 @@ Decision fields:
 - `fuzzy_decision`: raw fuzzy output
 - `decision`: final sellability decision after capacity guard
 - `decision_reason`: `fuzzy_reject`, `fuzzy_allow`, or `capacity_guard`
-
-Example via port-forward:
-
-```bash
-kubectl -n ksense port-forward svc/ksense-resource-offer-api 8080:8080
-curl http://127.0.0.1:8080/resource_offer_debug
-curl http://127.0.0.1:8080/resource_offer_now
-curl http://127.0.0.1:8080/reservations
-curl -X POST http://127.0.0.1:8080/reserve \
-  -H "Content-Type: application/json" \
-  -d '{"cpu":1,"ram":2,"storage":10,"ttl_s":60,"owner":"buyer-a"}'
-```
 
 Plot decision and sellable-resource trends from CSV:
 
@@ -364,14 +300,6 @@ python3 scripts/replay_controller_on_csv.py --input /path/to/kernel_metrics.csv 
 
 This writes `/tmp/ksense/fuzzy_replay.csv` by default.
 
-#### Run replay inside Kubernetes (pod/job)
+Kubernetes replay usage is documented in:
 
-If you want the replay to run **inside the cluster**, use the Job manifest:
-
-```bash
-scripts/create_replay_configmap.sh /path/to/kernel_metrics.csv
-kubectl apply -f kubernetes/fuzzy-replay-job.yaml
-kubectl logs -n ksense -l app=fuzzy-replay -f
-```
-
-The Job writes `/tmp/ksense/fuzzy_replay.csv` in the pod.
+`kubernetes/README.md`

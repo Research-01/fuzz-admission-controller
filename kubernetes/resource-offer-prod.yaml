@@ -33,9 +33,12 @@ spec:
               value: "5"
             - name: MZ_USAGE_API_CSV
               value: /tmp/ksense/usage_api_metrics.csv
-            # Keep this path only if your controller metrics CSV is available in-container.
+            # Live fuzzy/controller inputs (must be updated continuously by collector).
             - name: MZ_CONTROLLER_CSV
-              value: /tmp/ksense/kernel_metrics.csv
+              value: /var/run/ksense/kernel_metrics.csv
+            # Force live CSV reads; do not use replay mode in production.
+            - name: MZ_CONTROLLER_REPLAY
+              value: "false"
             - name: MZ_OFFER_REFRESH_S
               value: "40"
             - name: MZ_PREDICT_WINDOW_S
@@ -48,9 +51,16 @@ spec:
           volumeMounts:
             - name: ksense-tmp
               mountPath: /tmp/ksense
+            - name: controller-metrics
+              mountPath: /var/run/ksense
+              readOnly: true
       volumes:
         - name: ksense-tmp
           emptyDir: {}
+        - name: controller-metrics
+          hostPath:
+            path: /tmp/ksense
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service
