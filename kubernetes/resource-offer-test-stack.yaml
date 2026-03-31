@@ -92,7 +92,11 @@ spec:
             - name: MZ_USAGE_API_CSV
               value: /tmp/ksense/usage_api_metrics.csv
             - name: MZ_CONTROLLER_CSV
-              value: /data/kernel_metrics.csv
+              value: /tmp/ksense/kernel_metrics.csv
+            - name: MZ_CONTROLLER_FROM_USAGE_ENABLED
+              value: "true"
+            - name: MZ_CONTROLLER_REPLAY
+              value: "false"
             - name: MZ_OFFER_REFRESH_S
               value: "40"
             - name: MZ_PREDICT_WINDOW_S
