@@ -17,10 +17,11 @@ spec:
     spec:
       containers:
         - name: emulated-usage-api
-          image: fuzzy-only:latest
-          imagePullPolicy: IfNotPresent
-          command: ["python3", "emulated_usage_api.py"]
+          image: abdullahmuzlim279/ksense-resource-offer-stack:latest
+          imagePullPolicy: Always
           env:
+            - name: APP_MODE
+              value: "emulated-usage"
             - name: MZ_EMULATED_USAGE_HOST
               value: "0.0.0.0"
             - name: MZ_EMULATED_USAGE_PORT
@@ -75,10 +76,11 @@ spec:
     spec:
       containers:
         - name: resource-offer-api
-          image: fuzzy-only:latest
-          imagePullPolicy: IfNotPresent
-          command: ["python3", "resource_offer_api.py"]
+          image: abdullahmuzlim279/ksense-resource-offer-stack:latest
+          imagePullPolicy: Always
           env:
+            - name: APP_MODE
+              value: "resource-offer"
             - name: RESOURCE_OFFER_HOST
               value: "0.0.0.0"
             - name: RESOURCE_OFFER_PORT

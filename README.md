@@ -23,6 +23,47 @@ docker push your-registry/fuzzy-collector:latest
 docker push your-registry/fuzzy-scheduler:latest
 ```
 
+### Build and push resource-offer stack image
+
+This single image runs both APIs:
+- `APP_MODE=emulated-usage` -> serves usage replay API on port `8090`
+- `APP_MODE=resource-offer` -> serves sellable resource API on port `8080`
+
+Recommended image name:
+
+```bash
+export IMAGE=abdullahmuzlim279/ksense-resource-offer-stack:latest
+docker build -f Dockerfile.resource-offer -t "$IMAGE" .
+docker login -u abdullahmuzlim279
+docker push "$IMAGE"
+```
+
+Local container run examples:
+
+```bash
+# one-time
+docker network create ksense-net || true
+
+# Terminal 1: emulated usage API (hotel CSV replay)
+docker run --rm --name ksense-emu \
+  --network ksense-net \
+  -p 8090:8090 \
+  -e APP_MODE=emulated-usage \
+  -e MZ_EMULATED_USAGE_CSVS=/data/hotel1_sa__hotel1_sa2.csv,/data/hotel1_sn1_sa__hotel1_sn1_sa5.csv \
+  -v "$(pwd):/data:ro" \
+  "$IMAGE"
+
+# Terminal 2: resource-offer API
+docker run --rm --name ksense-offer \
+  --network ksense-net \
+  -p 8080:8080 \
+  -e APP_MODE=resource-offer \
+  -e MZ_USAGE_API_URL=http://ksense-emu:8090/usage/latest \
+  -e MZ_CONTROLLER_CSV=/data/kernel_metrics.csv \
+  -v "$(pwd):/data:ro" \
+  "$IMAGE"
+```
+
 ### Deploy to Kubernetes
 
 ```bash
@@ -166,6 +207,7 @@ Emulated usage API env vars:
 This test runs fully in-cluster with two pods:
 - `ksense-emulated-usage-api` (replays hotel CSV every 5s)
 - `ksense-resource-offer-api` (mirrors usage API to local CSV and serves `/resource_offer`)
+- both deployments use `abdullahmuzlim279/ksense-resource-offer-stack:latest`
 
 1) Load emulated CSVs into ConfigMap:
 
