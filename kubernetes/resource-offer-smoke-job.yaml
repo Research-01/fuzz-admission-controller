@@ -1,0 +1,34 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ksense-resource-offer-smoke
+  namespace: ksense
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: ksense-resource-offer-smoke
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: smoke
+          image: curlimages/curl:8.7.1
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ceu"]
+          args:
+            - |
+              echo "Checking emulated usage API..."
+              curl -fsS http://ksense-emulated-usage-api:8090/healthz
+              curl -fsS http://ksense-emulated-usage-api:8090/usage/latest
+              echo
+
+              echo "Checking resource-offer API..."
+              curl -fsS http://ksense-resource-offer-api:8080/healthz
+              OUT="$(curl -fsS http://ksense-resource-offer-api:8080/resource_offer)"
+              echo "${OUT}"
+              echo "${OUT}" | grep -q '"cpu"'
+              echo "${OUT}" | grep -q '"ram"'
+              echo "${OUT}" | grep -q '"storage"'
+
+              echo "Smoke test passed."

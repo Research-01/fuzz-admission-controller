@@ -1,0 +1,127 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ksense-emulated-usage-api
+  namespace: ksense
+  labels:
+    app: ksense-emulated-usage-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ksense-emulated-usage-api
+  template:
+    metadata:
+      labels:
+        app: ksense-emulated-usage-api
+    spec:
+      containers:
+        - name: emulated-usage-api
+          image: fuzzy-only:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "emulated_usage_api.py"]
+          env:
+            - name: MZ_EMULATED_USAGE_HOST
+              value: "0.0.0.0"
+            - name: MZ_EMULATED_USAGE_PORT
+              value: "8090"
+            - name: MZ_EMULATED_USAGE_TICK_S
+              value: "5"
+            - name: MZ_EMULATED_USAGE_LOOP
+              value: "true"
+            - name: MZ_EMULATED_USAGE_CSVS
+              value: /data/hotel1_sa__hotel1_sa2.csv,/data/hotel1_sn1_sa__hotel1_sn1_sa5.csv
+          ports:
+            - name: http
+              containerPort: 8090
+          volumeMounts:
+            - name: emulated-data
+              mountPath: /data
+              readOnly: true
+      volumes:
+        - name: emulated-data
+          configMap:
+            name: ksense-emulated-metrics-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ksense-emulated-usage-api
+  namespace: ksense
+spec:
+  selector:
+    app: ksense-emulated-usage-api
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ksense-resource-offer-api
+  namespace: ksense
+  labels:
+    app: ksense-resource-offer-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ksense-resource-offer-api
+  template:
+    metadata:
+      labels:
+        app: ksense-resource-offer-api
+    spec:
+      containers:
+        - name: resource-offer-api
+          image: fuzzy-only:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "resource_offer_api.py"]
+          env:
+            - name: RESOURCE_OFFER_HOST
+              value: "0.0.0.0"
+            - name: RESOURCE_OFFER_PORT
+              value: "8080"
+            - name: MZ_USAGE_API_URL
+              value: http://ksense-emulated-usage-api.ksense.svc:8090/usage/latest
+            - name: MZ_USAGE_API_POLL_S
+              value: "5"
+            - name: MZ_USAGE_API_CSV
+              value: /tmp/ksense/usage_api_metrics.csv
+            - name: MZ_CONTROLLER_CSV
+              value: /data/kernel_metrics.csv
+            - name: MZ_OFFER_REFRESH_S
+              value: "40"
+            - name: MZ_PREDICT_WINDOW_S
+              value: "300"
+            - name: MZ_RESOURCE_OFFER_CSV
+              value: /tmp/ksense/resource_offer.csv
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: emulated-data
+              mountPath: /data
+              readOnly: true
+            - name: ksense-tmp
+              mountPath: /tmp/ksense
+      volumes:
+        - name: emulated-data
+          configMap:
+            name: ksense-emulated-metrics-data
+        - name: ksense-tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ksense-resource-offer-api
+  namespace: ksense
+spec:
+  selector:
+    app: ksense-resource-offer-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

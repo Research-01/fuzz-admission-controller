@@ -2,4 +2,6 @@
 
 __all__ = [
     "collector",
+    "emulated_usage_api",
+    "resource_offer_server",
 ]

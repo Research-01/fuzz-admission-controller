@@ -110,9 +110,7 @@ def _parse_recent_metrics(cfg: FuzzyConfig):
     cpu_idx = headers.index("CPUUtil") if "CPUUtil" in headers else None
     psi_idx = headers.index("PSI") if "PSI" in headers else None
 
-    now = datetime.now()
-    long_cutoff = now - timedelta(seconds=cfg.long_win_s)
-    entries = []
+    parsed_entries = []
     start_idx = 1 if lines and lines[0] == header_line else 0
     for line in lines[start_idx:]:
         parts = [p.strip() for p in line.split(",")]
@@ -124,11 +122,14 @@ def _parse_recent_metrics(cfg: FuzzyConfig):
         if len(parts) <= max_required:
             continue
         ts = parts[time_idx]
-        try:
-            ts_dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            continue
-        if ts_dt < long_cutoff:
+        ts_dt = None
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+            try:
+                ts_dt = datetime.strptime(ts, fmt)
+                break
+            except ValueError:
+                continue
+        if ts_dt is None:
             continue
         fric = parts[fric_idx]
         eng = parts[eng_idx]
@@ -161,7 +162,18 @@ def _parse_recent_metrics(cfg: FuzzyConfig):
             except ValueError:
                 psi_val = None
 
-        entries.append((ts_dt, fric_val, eng_val, dir_val, cpu_val, psi_val))
+        parsed_entries.append((ts_dt, fric_val, eng_val, dir_val, cpu_val, psi_val))
+
+    if not parsed_entries:
+        return []
+
+    latest_ts = max(e[0] for e in parsed_entries)
+    now = datetime.now()
+    # For emulated/replay CSVs with old timestamps, anchor cutoff to latest CSV time.
+    reference_ts = latest_ts if (now - latest_ts) > timedelta(seconds=cfg.long_win_s) else now
+    long_cutoff = reference_ts - timedelta(seconds=cfg.long_win_s)
+
+    entries = [e for e in parsed_entries if e[0] >= long_cutoff]
     return entries
 
 
