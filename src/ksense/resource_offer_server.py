@@ -17,6 +17,7 @@ import uvicorn
 from fastapi import Body, FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from .config import MAHAL_MIN_SAMPLES
 from .energy import AdaptiveVolatilityEnergy
 from .friction import mahalanobis_distance_and_direction
 from .fuzzy_controller import FuzzyConfig, FuzzyController
@@ -489,7 +490,7 @@ class ApiControllerMetricsWriter:
 
     def __init__(self, out_csv: str, baseline_samples: int = 20):
         self.out_csv = out_csv
-        self.baseline_samples = max(8, int(baseline_samples))
+        self.baseline_samples = max(int(MAHAL_MIN_SAMPLES), int(baseline_samples))
         self._lock = threading.Lock()
         self._baseline_buf: deque = deque(maxlen=self.baseline_samples)
         self._baseline_frozen: Optional[List[List[float]]] = None
@@ -507,6 +508,23 @@ class ApiControllerMetricsWriter:
             return
         with open(self.out_csv, "w", encoding="utf-8", newline="") as f:
             f.write(",".join(self._CSV_HEADER) + "\n")
+
+    def baseline_state(self) -> Dict[str, object]:
+        with self._lock:
+            if self._baseline_frozen is None:
+                mode = "CALIBRATING"
+                samples = len(self._baseline_buf)
+                ready = False
+            else:
+                mode = "FROZEN"
+                samples = len(self._baseline_frozen)
+                ready = samples >= self.baseline_samples
+        return {
+            "mode": mode,
+            "samples": int(samples),
+            "target_samples": int(self.baseline_samples),
+            "ready": bool(ready),
+        }
 
     def observe_sample(self, sample: UsageSample) -> None:
         if sample is None:
@@ -664,6 +682,7 @@ class ResourceOfferEngine:
         self._default_reservation_ttl_s = float(os.getenv("MZ_RESERVATION_TTL_S", "60"))
         self._min_sellable_cpu = float(os.getenv("MZ_MIN_SELLABLE_CPU", "1"))
         self._min_sellable_ram_gb = float(os.getenv("MZ_MIN_SELLABLE_RAM_GB", "1"))
+        self._block_until_baseline = os.getenv("MZ_BLOCK_DURING_BASELINE", "true").strip().lower() == "true"
         self._ensure_offer_csv()
 
     def _set_tick_usage_override(self, usage: Optional[Dict[str, object]]) -> None:
@@ -874,6 +893,9 @@ class ResourceOfferEngine:
                 self.controller_writer.write_latest_row(datetime.now())
             except Exception:
                 pass
+        controller_baseline = (
+            self.controller_writer.baseline_state() if self.controller_writer is not None else None
+        )
 
         with self._lock:
             if self._reservations_enabled:
@@ -883,6 +905,107 @@ class ResourceOfferEngine:
             else:
                 reserved = {"cpu": 0.0, "ram": 0.0, "storage": 0.0}
                 active_reservations = 0
+
+        usage_latest = {
+            "timestamp": latest_sample.ts.strftime("%Y-%m-%d %H:%M:%S") if latest_sample is not None else None,
+            "cpu_usage_pct": round(float(latest_sample.cpu_pct), 4)
+            if latest_sample is not None and latest_sample.cpu_pct is not None
+            else None,
+            "cpu_psi_some_pct": round(float(latest_sample.psi_pct), 4)
+            if latest_sample is not None and latest_sample.psi_pct is not None
+            else None,
+            "ram_usage_gb": round(float(latest_sample.ram_gb), 4)
+            if latest_sample is not None and latest_sample.ram_gb is not None
+            else None,
+            "disk_used_pct": round(float(latest_sample.disk_pct), 4)
+            if latest_sample is not None and latest_sample.disk_pct is not None
+            else None,
+        }
+
+        ebpf_inputs = {
+            "latest_sched_total_ms": _round_or_none(float(latest_sample.sched_ms), 3)
+            if latest_sample is not None and latest_sample.sched_ms is not None
+            else None,
+            "latest_dstate_total_ms": _round_or_none(float(latest_sample.dstate_ms), 3)
+            if latest_sample is not None and latest_sample.dstate_ms is not None
+            else None,
+            "latest_softirq_total_ms": _round_or_none(float(latest_sample.softirq_ms), 3)
+            if latest_sample is not None and latest_sample.softirq_ms is not None
+            else None,
+            "latest_total_ms": _round_or_none(float(latest_sample.ebpf_total_ms), 3)
+            if latest_sample is not None and latest_sample.ebpf_total_ms is not None
+            else None,
+            "predicted_total_ms": None,
+            "window_p95_total_ms": None,
+        }
+
+        if (
+            self.controller_writer is not None
+            and self._block_until_baseline
+            and isinstance(controller_baseline, dict)
+            and not bool(controller_baseline.get("ready"))
+        ):
+            return {
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "decision": "deny",
+                "decision_reason": "baseline_warmup",
+                "fuzzy_decision": "deny",
+                "level": "warmup",
+                "score": 0.0,
+                "offer": {"cpu": 0, "ram": 0, "GPU": 0, "storage": 0},
+                "offer_before_reservations": {"cpu": 0, "ram": 0, "GPU": 0, "storage": 0},
+                "reserved_totals": reserved,
+                "active_reservations": active_reservations,
+                "min_sellable": {"cpu": self._min_sellable_cpu, "ram": self._min_sellable_ram_gb},
+                "reservation_mode": "enabled" if self._reservations_enabled else "disabled",
+                "guard_band": {
+                    "mode": self._guard_mode,
+                    "pct": None,
+                    "cpu": 0.0,
+                    "ram": 0.0,
+                    "storage": 0.0,
+                },
+                "predicted": {
+                    "cpu_pct": None,
+                    "psi_pct": None,
+                    "ram_gb": None,
+                    "disk_pct": None,
+                    "ebpf_total_ms": None,
+                    "ebpf_total_p95_ms": None,
+                    "cpu_std": None,
+                    "psi_std": None,
+                    "ram_std": None,
+                    "disk_std": None,
+                },
+                "usage_window": {
+                    "sample_count": len(samples),
+                    "window_seconds": self.history.window_s,
+                    "oldest_timestamp": oldest_sample.ts.strftime("%Y-%m-%d %H:%M:%S")
+                    if oldest_sample is not None
+                    else None,
+                    "latest_timestamp": latest_sample.ts.strftime("%Y-%m-%d %H:%M:%S")
+                    if latest_sample is not None
+                    else None,
+                },
+                "usage_latest": usage_latest,
+                "fuzzy_inputs": {
+                    "friction_signed": None,
+                    "energy_scaled": None,
+                    "cpu_util": None,
+                    "psi_1s": None,
+                    "direction": None,
+                },
+                "ebpf_inputs": ebpf_inputs,
+                "controller_metrics_latest": None,
+                "controller_baseline": controller_baseline,
+                "capacity_totals": {
+                    "cpu": round(self.capacity.cpu_cores, 2),
+                    "ram": round(self.capacity.ram_gb, 2),
+                    "GPU": round(self.capacity.gpu_count, 2),
+                    "storage": round(self.capacity.storage_gb, 2),
+                },
+                "safety_multiplier": None,
+            }
 
         pred: Dict[str, Optional[float]] = {}
         fuzzy_report: Dict[str, object] = {"level": "medium", "score": 55.0, "decision": "deny"}
@@ -977,22 +1100,6 @@ class ResourceOfferEngine:
                     }
                 else:
                     decision = "allow"
-        usage_latest = {
-            "timestamp": latest_sample.ts.strftime("%Y-%m-%d %H:%M:%S") if latest_sample is not None else None,
-            "cpu_usage_pct": round(float(latest_sample.cpu_pct), 4)
-            if latest_sample is not None and latest_sample.cpu_pct is not None
-            else None,
-            "cpu_psi_some_pct": round(float(latest_sample.psi_pct), 4)
-            if latest_sample is not None and latest_sample.psi_pct is not None
-            else None,
-            "ram_usage_gb": round(float(latest_sample.ram_gb), 4)
-            if latest_sample is not None and latest_sample.ram_gb is not None
-            else None,
-            "disk_used_pct": round(float(latest_sample.disk_pct), 4)
-            if latest_sample is not None and latest_sample.disk_pct is not None
-            else None,
-        }
-
         fuzzy_metrics = fuzzy_report.get("metrics", {}) if isinstance(fuzzy_report.get("metrics"), dict) else {}
         fuzzy_inputs = {
             "friction_signed": round(float(fuzzy_metrics.get("friction_signed")), 6)
@@ -1010,22 +1117,8 @@ class ResourceOfferEngine:
             "direction": fuzzy_metrics.get("direction"),
         }
 
-        ebpf_inputs = {
-            "latest_sched_total_ms": _round_or_none(float(latest_sample.sched_ms), 3)
-            if latest_sample is not None and latest_sample.sched_ms is not None
-            else None,
-            "latest_dstate_total_ms": _round_or_none(float(latest_sample.dstate_ms), 3)
-            if latest_sample is not None and latest_sample.dstate_ms is not None
-            else None,
-            "latest_softirq_total_ms": _round_or_none(float(latest_sample.softirq_ms), 3)
-            if latest_sample is not None and latest_sample.softirq_ms is not None
-            else None,
-            "latest_total_ms": _round_or_none(float(latest_sample.ebpf_total_ms), 3)
-            if latest_sample is not None and latest_sample.ebpf_total_ms is not None
-            else None,
-            "predicted_total_ms": _round_or_none(pred.get("ebpf_ms"), 3),
-            "window_p95_total_ms": _round_or_none(pred.get("ebpf_p95"), 3),
-        }
+        ebpf_inputs["predicted_total_ms"] = _round_or_none(pred.get("ebpf_ms"), 3)
+        ebpf_inputs["window_p95_total_ms"] = _round_or_none(pred.get("ebpf_p95"), 3)
         controller_metrics_latest = (
             self.controller_replay.latest() if self.controller_replay is not None else None
         )
@@ -1079,6 +1172,7 @@ class ResourceOfferEngine:
             "fuzzy_inputs": fuzzy_inputs,
             "ebpf_inputs": ebpf_inputs,
             "controller_metrics_latest": controller_metrics_latest,
+            "controller_baseline": controller_baseline,
             "capacity_totals": {
                 "cpu": round(self.capacity.cpu_cores, 2),
                 "ram": round(self.capacity.ram_gb, 2),

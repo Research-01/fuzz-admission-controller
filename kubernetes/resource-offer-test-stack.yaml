@@ -18,7 +18,7 @@ spec:
       containers:
         - name: emulated-usage-api
           image: abdullahmuzlim279/ksense-resource-offer-stack:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           env:
             - name: APP_MODE
               value: "emulated-usage"
@@ -77,7 +77,7 @@ spec:
       containers:
         - name: resource-offer-api
           image: abdullahmuzlim279/ksense-resource-offer-stack:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           env:
             - name: APP_MODE
               value: "resource-offer"
@@ -97,6 +97,10 @@ spec:
               value: "true"
             - name: MZ_CONTROLLER_REPLAY
               value: "false"
+            - name: MZ_CONTROLLER_BASELINE_SAMPLES
+              value: "40"
+            - name: MZ_BLOCK_DURING_BASELINE
+              value: "true"
             - name: MZ_OFFER_REFRESH_S
               value: "40"
             - name: MZ_PREDICT_WINDOW_S
