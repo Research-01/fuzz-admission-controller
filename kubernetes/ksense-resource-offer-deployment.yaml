@@ -47,6 +47,11 @@ spec:
             # Force CSV live path; do not use replay mode.
             - name: MZ_CONTROLLER_REPLAY
               value: "false"
+            # Hold sellable decisions until baseline is fully calibrated.
+            - name: MZ_CONTROLLER_BASELINE_SAMPLES
+              value: "40"
+            - name: MZ_BLOCK_DURING_BASELINE
+              value: "true"
             - name: MZ_OFFER_REFRESH_S
               value: "40"
             - name: MZ_PREDICT_WINDOW_S
