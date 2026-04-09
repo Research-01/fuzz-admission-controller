@@ -583,13 +583,12 @@ class ApiControllerMetricsWriter:
                 else 0.0
             )
             if self._baseline_frozen is None:
-                mode = "CALIBRATING"
                 samples = len(self._baseline_buf)
                 ready = False
             else:
-                mode = "FROZEN"
                 samples = len(self._baseline_frozen)
                 ready = (samples >= self.baseline_samples) and (elapsed_s >= self.min_calibration_s)
+            mode = "FROZEN" if ready else "CALIBRATING"
         return {
             "mode": mode,
             "samples": int(samples),
@@ -633,8 +632,14 @@ class ApiControllerMetricsWriter:
                 fr, dr = mahalanobis_distance_and_direction(x_t, self._baseline_frozen)
                 friction = float(fr if math.isfinite(fr) else 0.0)
                 direction = float(dr if math.isfinite(dr) else 1.0)
-                baseline_mode = "FROZEN"
                 baseline_samples = len(self._baseline_frozen)
+                elapsed_s = (
+                    max(0.0, time.monotonic() - self._calibration_start_monotonic)
+                    if self._calibration_start_monotonic is not None
+                    else 0.0
+                )
+                baseline_ready = (baseline_samples >= self.baseline_samples) and (elapsed_s >= self.min_calibration_s)
+                baseline_mode = "FROZEN" if baseline_ready else "CALIBRATING"
 
             if self._last_friction is not None and self._last_ts is not None:
                 dt = max(1e-6, (sample.ts - self._last_ts).total_seconds())
