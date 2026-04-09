@@ -191,6 +191,70 @@ class NodeCapacity:
     gpu_count: float = float(os.getenv("MZ_TOTAL_GPU", "0"))
 
 
+def _derive_usage_capacity_url(usage_api_url: str) -> str:
+    override = os.getenv("MZ_USAGE_CAPACITY_URL", "").strip()
+    if override:
+        return override
+
+    base = (usage_api_url or "").strip()
+    if not base:
+        return ""
+
+    suffix = "/usage/latest"
+    if base.endswith(suffix):
+        return base[: -len(suffix)] + "/usage/capacity"
+    return base.rstrip("/") + "/usage/capacity"
+
+
+def _fetch_node_capacity_from_usage_api(capacity_url: str, timeout_s: float = 2.0) -> Optional[NodeCapacity]:
+    if not capacity_url:
+        return None
+
+    req = urllib.request.Request(capacity_url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as r:
+            payload = json.loads(r.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    cpu_cores = _to_float(payload.get("cpu_cores"))
+    cpu_total_mcores = _to_float(payload.get("cpu_total_mcores"))
+    ram_total_mi = _to_float(payload.get("ram_total_mi"))
+    disk_total_gb = _to_float(payload.get("disk_total_gb"))
+    gpu_count = _to_float(payload.get("gpu_count"))
+
+    # Prefer explicit cores if present; fallback from mcores.
+    if cpu_cores is None and cpu_total_mcores is not None:
+        cpu_cores = cpu_total_mcores / 1000.0
+
+    return NodeCapacity(
+        cpu_cores=max(0.0, float(cpu_cores)) if cpu_cores is not None else 0.0,
+        ram_gb=max(0.0, float(ram_total_mi) / 1024.0) if ram_total_mi is not None else 0.0,
+        storage_gb=max(0.0, float(disk_total_gb)) if disk_total_gb is not None else 0.0,
+        gpu_count=max(0.0, float(gpu_count)) if gpu_count is not None else 0.0,
+    )
+
+
+def _post_calibration_done_signal(url: str, payload: Dict[str, object], timeout_s: float = 2.0) -> bool:
+    if not url:
+        return False
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s):
+            return True
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError):
+        return False
+
+
 @dataclass
 class UsageSample:
     ts: datetime
@@ -488,12 +552,14 @@ class ApiControllerMetricsWriter:
         "Energy_kFactor",
     ]
 
-    def __init__(self, out_csv: str, baseline_samples: int = 20):
+    def __init__(self, out_csv: str, baseline_samples: int = 20, min_calibration_s: float = 0.0):
         self.out_csv = out_csv
         self.baseline_samples = max(int(MAHAL_MIN_SAMPLES), int(baseline_samples))
+        self.min_calibration_s = max(0.0, float(min_calibration_s))
         self._lock = threading.Lock()
         self._baseline_buf: deque = deque(maxlen=self.baseline_samples)
         self._baseline_frozen: Optional[List[List[float]]] = None
+        self._calibration_start_monotonic: Optional[float] = None
         self._energy = AdaptiveVolatilityEnergy()
         self._last_friction: Optional[float] = None
         self._last_ts: Optional[datetime] = None
@@ -511,6 +577,11 @@ class ApiControllerMetricsWriter:
 
     def baseline_state(self) -> Dict[str, object]:
         with self._lock:
+            elapsed_s = (
+                max(0.0, time.monotonic() - self._calibration_start_monotonic)
+                if self._calibration_start_monotonic is not None
+                else 0.0
+            )
             if self._baseline_frozen is None:
                 mode = "CALIBRATING"
                 samples = len(self._baseline_buf)
@@ -518,11 +589,13 @@ class ApiControllerMetricsWriter:
             else:
                 mode = "FROZEN"
                 samples = len(self._baseline_frozen)
-                ready = samples >= self.baseline_samples
+                ready = (samples >= self.baseline_samples) and (elapsed_s >= self.min_calibration_s)
         return {
             "mode": mode,
             "samples": int(samples),
             "target_samples": int(self.baseline_samples),
+            "elapsed_warmup_s": round(float(elapsed_s), 3),
+            "target_warmup_s": round(float(self.min_calibration_s), 3),
             "ready": bool(ready),
         }
 
@@ -544,6 +617,8 @@ class ApiControllerMetricsWriter:
         ]
 
         with self._lock:
+            if self._calibration_start_monotonic is None:
+                self._calibration_start_monotonic = time.monotonic()
             if self._baseline_frozen is None:
                 self._baseline_buf.append(list(x_t))
                 if len(self._baseline_buf) >= self.baseline_samples:
@@ -683,7 +758,36 @@ class ResourceOfferEngine:
         self._min_sellable_cpu = float(os.getenv("MZ_MIN_SELLABLE_CPU", "1"))
         self._min_sellable_ram_gb = float(os.getenv("MZ_MIN_SELLABLE_RAM_GB", "1"))
         self._block_until_baseline = os.getenv("MZ_BLOCK_DURING_BASELINE", "true").strip().lower() == "true"
+        self._calibration_done_post_url = os.getenv("MZ_CALIBRATION_DONE_POST_URL", "").strip()
+        self._calibration_done_signal_sent = False
         self._ensure_offer_csv()
+
+    def _notify_calibration_done_once(self, controller_baseline: Optional[Dict[str, object]]) -> None:
+        if not isinstance(controller_baseline, dict):
+            return
+        if not bool(controller_baseline.get("ready")):
+            return
+        if not self._calibration_done_post_url:
+            return
+        with self._lock:
+            if self._calibration_done_signal_sent:
+                return
+
+        ok = _post_calibration_done_signal(
+            self._calibration_done_post_url,
+            {"signal": "FIXED"},
+            timeout_s=2.0,
+        )
+        if not ok:
+            print(
+                f"[resource-offer] warning: failed to POST calibration signal to "
+                f"{self._calibration_done_post_url}"
+            )
+            return
+
+        with self._lock:
+            self._calibration_done_signal_sent = True
+        print(f"[resource-offer] calibration signal sent to {self._calibration_done_post_url}")
 
     def _set_tick_usage_override(self, usage: Optional[Dict[str, object]]) -> None:
         with self._lock:
@@ -896,6 +1000,7 @@ class ResourceOfferEngine:
         controller_baseline = (
             self.controller_writer.baseline_state() if self.controller_writer is not None else None
         )
+        self._notify_calibration_done_once(controller_baseline)
 
         with self._lock:
             if self._reservations_enabled:
@@ -1410,6 +1515,7 @@ def _create_app(engine: ResourceOfferEngine) -> FastAPI:
 
 def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
     usage_api_url = os.getenv("MZ_USAGE_API_URL", "").strip()
+    usage_capacity_url = _derive_usage_capacity_url(usage_api_url) if usage_api_url else ""
     usage_api_poll_s = float(os.getenv("MZ_USAGE_API_POLL_S", "5"))
     usage_api_csv = os.getenv("MZ_USAGE_API_CSV", "/tmp/ksense/usage_api_metrics.csv").strip()
     usage_api_csv = _resolve_writable_csv_path(usage_api_csv, label="usage_api")
@@ -1430,6 +1536,7 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
     replay_mode = os.getenv("MZ_CONTROLLER_REPLAY", "auto").strip().lower()
     controller_from_usage = os.getenv("MZ_CONTROLLER_FROM_USAGE_ENABLED", "true").strip().lower() == "true"
     controller_writer_baseline_samples = int(os.getenv("MZ_CONTROLLER_BASELINE_SAMPLES", "20"))
+    controller_writer_baseline_min_s = float(os.getenv("MZ_CONTROLLER_BASELINE_MIN_SECONDS", "0"))
     if usage_api_url and controller_from_usage:
         controller_csv = _resolve_writable_csv_path(controller_csv, label="controller")
 
@@ -1439,7 +1546,18 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
     offer_csv_path = _resolve_writable_csv_path(offer_csv_path, label="resource_offer")
     refresh_s = float(os.getenv("MZ_OFFER_REFRESH_S", "40"))
 
-    capacity = NodeCapacity()
+    if usage_api_url:
+        fetched_capacity = _fetch_node_capacity_from_usage_api(usage_capacity_url)
+        if fetched_capacity is None:
+            capacity = NodeCapacity(cpu_cores=0.0, ram_gb=0.0, storage_gb=0.0, gpu_count=0.0)
+            print(
+                f"[resource-offer] warning: failed to load capacity from {usage_capacity_url}; "
+                "using zero-initialized capacity"
+            )
+        else:
+            capacity = fetched_capacity
+    else:
+        capacity = NodeCapacity()
     history = EmulatedUsageHistory(
         csv_paths=usage_csvs,
         window_s=window_s,
@@ -1467,6 +1585,7 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
         controller_writer = ApiControllerMetricsWriter(
             out_csv=controller_csv,
             baseline_samples=controller_writer_baseline_samples,
+            min_calibration_s=controller_writer_baseline_min_s,
         )
 
     if replay_enabled:
@@ -1549,8 +1668,14 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
     print(f"[resource-offer] usage CSVs: {usage_csvs}")
     if usage_mirror is not None:
         print(f"[resource-offer] usage API source: {usage_api_url}")
+        print(f"[resource-offer] usage API capacity source: {usage_capacity_url}")
         print(f"[resource-offer] usage API poll: {usage_api_poll_s}s")
         print(f"[resource-offer] mirrored usage CSV: {usage_api_csv}")
+    print(
+        "[resource-offer] capacity totals: "
+        f"cpu={capacity.cpu_cores}, ram_gb={capacity.ram_gb}, "
+        f"storage_gb={capacity.storage_gb}, gpu={capacity.gpu_count}"
+    )
     print(f"[resource-offer] controller CSV: {controller_csv}")
     print(f"[resource-offer] controller replay mode: {replay_mode}")
     print(f"[resource-offer] controller-from-usage writer: {'enabled' if controller_writer is not None else 'disabled'}")

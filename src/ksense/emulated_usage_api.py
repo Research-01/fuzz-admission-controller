@@ -137,7 +137,7 @@ def _default_hotel_csvs() -> List[str]:
     return sorted(glob.glob(os.path.join(os.getcwd(), "hotel*.csv")))
 
 
-def run_server(host: str = "127.0.0.1", port: int = 8090) -> None:
+def run_server(host: str = "0.0.0.0", port: int = 8090) -> None:
     csvs_env = os.getenv("MZ_EMULATED_USAGE_CSVS", "").strip()
     if csvs_env:
         csv_paths = [x.strip() for x in csvs_env.split(",") if x.strip()]

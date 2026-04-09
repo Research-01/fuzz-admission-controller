@@ -11,6 +11,6 @@ from ksense.resource_offer_server import run_server
 
 
 if __name__ == "__main__":
-    host = os.getenv("RESOURCE_OFFER_HOST", "127.0.0.1")
+    host = os.getenv("RESOURCE_OFFER_HOST", "0.0.0.0")
     port = int(os.getenv("RESOURCE_OFFER_PORT", "8080"))
     run_server(host=host, port=port)

@@ -11,6 +11,6 @@ from ksense.emulated_usage_api import run_server
 
 
 if __name__ == "__main__":
-    host = os.getenv("MZ_EMULATED_USAGE_HOST", "127.0.0.1")
+    host = os.getenv("MZ_EMULATED_USAGE_HOST", "0.0.0.0")
     port = int(os.getenv("MZ_EMULATED_USAGE_PORT", "8090"))
     run_server(host=host, port=port)

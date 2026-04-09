@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: resource-offer-api
-          image: abdullahmuzlim279/ksense-resource-offer-stack:latest
+          image: abdullahmuzlim279/ksense-resource-offer-stack@sha256:91d7989c5e95a3d9b731dc348e737aafe795b8fe14e0feaa2b74e2d43d71de4c
           imagePullPolicy: Always
           env:
             - name: APP_MODE
@@ -34,6 +34,8 @@ spec:
             # Real usage API endpoint consumed by the controller.
             - name: MZ_USAGE_API_URL
               value: "http://ksense-usage-api.ksense.svc:8090/usage/latest"
+            - name: MZ_CALIBRATION_DONE_POST_URL
+              value: "http://ksense-usage-api.ksense.svc:8090/calibration/done"
             - name: MZ_USAGE_API_POLL_S
               value: "5"
             - name: MZ_USAGE_API_CSV
@@ -50,6 +52,8 @@ spec:
             # Hold sellable decisions until baseline is fully calibrated.
             - name: MZ_CONTROLLER_BASELINE_SAMPLES
               value: "40"
+            - name: MZ_CONTROLLER_BASELINE_MIN_SECONDS
+              value: "600"
             - name: MZ_BLOCK_DURING_BASELINE
               value: "true"
             - name: MZ_OFFER_REFRESH_S
@@ -61,6 +65,7 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+              hostPort: 8080
           volumeMounts:
             - name: ksense-tmp
               mountPath: /tmp/ksense
