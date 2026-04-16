@@ -770,7 +770,11 @@ class ResourceOfferEngine:
     def _notify_calibration_done_once(self, controller_baseline: Optional[Dict[str, object]]) -> None:
         if not isinstance(controller_baseline, dict):
             return
-        if not bool(controller_baseline.get("ready")):
+        mode = str(controller_baseline.get("mode") or "").strip().upper()
+        ready = bool(controller_baseline.get("ready"))
+        # Send as soon as calibration is considered frozen.
+        # `ready` keeps compatibility with older/newer semantics.
+        if not (ready or mode == "FROZEN"):
             return
         if not self._calibration_done_post_url:
             return
@@ -1643,6 +1647,9 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
                     sample = engine._usage_payload_to_sample(payload)
                     if sample is not None:
                         controller_writer.observe_sample(sample)
+                    # Check/send calibration-done signal on the fast usage poll path
+                    # so notification is not delayed by the slower offer refresh loop.
+                    engine._notify_calibration_done_once(controller_writer.baseline_state())
                 if changed and controller_replay is not None:
                     controller_replay.step()
             except Exception:
